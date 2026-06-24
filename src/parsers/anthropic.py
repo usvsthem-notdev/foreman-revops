@@ -71,7 +71,13 @@ def parse_anthropic_csv(data: bytes, filename: str = "upload.csv") -> ParsedBill
     warnings: list[str] = []
     entries: list[SpendEntry] = []
 
-    text = data.decode("utf-8-sig", errors="replace")
+    try:
+        text = data.decode("utf-8-sig", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"File is not valid UTF-8 (byte offset {exc.start}). "
+            "Re-export as UTF-8 CSV and try again."
+        ) from exc
     reader = csv.reader(io.StringIO(text))
 
     try:

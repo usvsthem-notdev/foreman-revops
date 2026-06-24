@@ -49,13 +49,15 @@ def render() -> None:
         _render_format_guide()
         return
 
-    # Security: validate file size before reading
-    data = uploaded.read()
-    if len(data) > _MAX_SIZE_MB * 1024 * 1024:
-        st.error(f"File too large ({len(data)/1e6:.1f} MB). Max is {_MAX_SIZE_MB} MB.")
+    # Security: check declared size before reading into memory.
+    # Streamlit's UploadedFile exposes .size (bytes) without calling .read().
+    if uploaded.size > _MAX_SIZE_MB * 1024 * 1024:
+        st.error(f"File too large ({uploaded.size / 1e6:.1f} MB). Max is {_MAX_SIZE_MB} MB.")
         return
 
-    # Security: basic MIME sniff — reject clearly binary files
+    data = uploaded.read()
+
+    # Security: reject non-UTF-8 content (binary files, wrong encoding).
     try:
         data.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -133,7 +135,14 @@ def render() -> None:
         if st.button("Import to Burn Map", type="primary", icon="📥"):
             with st.spinner("Importing…"):
                 count = insert_entries_bulk(bill.entries)
-            st.success(f"Imported {count:,} entries. Visit the Burn Map tab to see your data.")
+            skipped = len(bill.entries) - count
+            if count > 0:
+                msg = f"Imported {count:,} entries."
+                if skipped:
+                    msg += f" {skipped:,} duplicate(s) skipped."
+                st.success(msg + " Visit the Burn Map tab to see your data.")
+            else:
+                st.info(f"All {skipped:,} entries already exist — nothing new imported.")
             st.rerun()
 
 

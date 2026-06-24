@@ -68,6 +68,13 @@ class TestInsertFetch:
         rows = fetch_entries()
         assert len(rows) == 5
 
+    def test_bulk_insert_returns_actual_inserted_not_submitted(self):
+        entries = [_entry(cost_usd=0.001 * i) for i in range(1, 6)]
+        insert_entries_bulk(entries)
+        # Re-importing the same set must return 0, not 5
+        count = insert_entries_bulk(entries)
+        assert count == 0
+
     def test_duplicate_id_ignored(self):
         e = _entry()
         insert_entry(e)

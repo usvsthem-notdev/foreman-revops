@@ -25,7 +25,7 @@ _OPENAI_SIGNALS    = {"aggregation_timestamp", "snapshot_id", "context_tokens_in
 
 def detect_provider(data: bytes) -> Provider:
     try:
-        text = data.decode("utf-8-sig", errors="replace")
+        text = data.decode("utf-8-sig", errors="strict")
         reader = csv.reader(io.StringIO(text))
         header_row = next(reader, [])
         first_data  = next(reader, [])

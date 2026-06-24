@@ -70,7 +70,13 @@ def parse_openai_csv(data: bytes, filename: str = "upload.csv") -> ParsedBill:
     warnings: list[str] = []
     entries: list[SpendEntry] = []
 
-    text = data.decode("utf-8-sig", errors="replace")
+    try:
+        text = data.decode("utf-8-sig", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"File is not valid UTF-8 (byte offset {exc.start}). "
+            "Re-export as UTF-8 CSV and try again."
+        ) from exc
     reader = csv.reader(io.StringIO(text))
 
     try:
@@ -132,13 +138,17 @@ def _parse_row(
     input_tok = safe_int(get("input_tokens"))
     output_tok = safe_int(get("output_tokens"))
     reasoning_tok = safe_int(get("reasoning_tokens"))
+    # cached_context_tokens_input is a *subset* of input_tokens already counted
+    # in context_tokens_input — do not add again. We store it separately only
+    # for cost estimation (cached tokens are billed at a discounted rate).
     cached_tok = safe_int(get("cached_tokens"))
     cost_raw = get("cost_usd")
 
     # OpenAI exports cost as negative credits in some formats
     cost = abs(safe_float(cost_raw))
     if cost == 0.0 and (input_tok + output_tok) > 0:
-        cost = _estimate_openai_cost(model, input_tok + cached_tok, output_tok, reasoning_tok)
+        # Use input_tok directly; cached_tok is already included in that count.
+        cost = _estimate_openai_cost(model, input_tok, output_tok, reasoning_tok)
 
     feature = get("project") or None
 
@@ -147,7 +157,7 @@ def _parse_row(
         provider=Provider.openai,
         model=model,
         workload_class=infer_workload_class(model),
-        input_tokens=input_tok + cached_tok,
+        input_tokens=input_tok,   # cached tokens are a subset, not additive
         output_tokens=output_tok,
         reasoning_tokens=reasoning_tok,
         cost_usd=cost,

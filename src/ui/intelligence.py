@@ -3,6 +3,7 @@ Spend Intelligence page — FIG. 03 flow: Detect → Propose → Guardrails → 
 """
 from __future__ import annotations
 
+import html as _html
 import pandas as pd
 import streamlit as st
 
@@ -94,14 +95,20 @@ def render(df: pd.DataFrame) -> None:
 
 def _render_finding(f: Finding) -> None:
     css_class = f"finding-{f.severity}"
-    savings_note = f"  Est. savings: **${f.estimated_savings_usd:,.2f}**" if f.estimated_savings_usd > 0 else ""
-    html = f"""
+    # Escape user-sourced strings (model names from CSV) before embedding in HTML.
+    title_safe = _html.escape(f.title)
+    detail_safe = _html.escape(f.detail)
+    savings_note = (
+        f"  Est. savings: <strong>${f.estimated_savings_usd:,.2f}</strong>"
+        if f.estimated_savings_usd > 0 else ""
+    )
+    markup = f"""
     <div class="{css_class}">
-        <strong>[{f.severity.upper()}] {f.title}</strong><br>
-        <span style="font-size:0.85rem">{f.detail}{savings_note}</span>
+        <strong>[{_html.escape(f.severity.upper())}] {title_safe}</strong><br>
+        <span style="font-size:0.85rem">{detail_safe}{savings_note}</span>
     </div>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    st.markdown(markup, unsafe_allow_html=True)
 
 
 def _render_proposal(p: Proposal) -> None:

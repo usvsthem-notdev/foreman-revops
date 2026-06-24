@@ -1,6 +1,7 @@
 """
-SQLite persistence layer.  All queries use parameterized statements —
-never f-strings — to prevent SQL injection.
+SQLite persistence layer.  All user-supplied values are bound via ? parameters.
+The WHERE clause skeletons are assembled from hard-coded string literals (never
+user input), so there is no SQL injection surface.
 """
 from __future__ import annotations
 
@@ -26,9 +27,15 @@ def get_db_path() -> Path:
     if raw:
         import tempfile
         p = Path(raw).resolve()
-        # Safety: must be within home dir or the system temp dir (resolves symlinks on macOS)
-        allowed = [Path.home().resolve(), Path(tempfile.gettempdir()).resolve()]
-        if not any(str(p).startswith(str(a)) for a in allowed):
+        # Use is_relative_to for boundary-aware path checks (no prefix-collision bypass).
+        # Include both gettempdir() and /tmp because on macOS /tmp → /private/tmp while
+        # gettempdir() returns the per-session Launchd temp dir.
+        allowed = [
+            Path.home().resolve(),
+            Path(tempfile.gettempdir()).resolve(),
+            Path("/tmp").resolve(),
+        ]
+        if not any(p == a or p.is_relative_to(a) for a in allowed):
             raise ValueError(f"FOREMAN_DB_PATH must be inside home or temp dir, got: {p}")
         return p
     return _DEFAULT_DB.resolve()
@@ -129,6 +136,7 @@ def insert_entry(entry: SpendEntry) -> None:
 
 
 def insert_entries_bulk(entries: list[SpendEntry]) -> int:
+    """Return the number of rows *actually inserted* (skips already-existing IDs)."""
     sql = """
         INSERT OR IGNORE INTO spend_entries
             (id, timestamp, provider, model, workload_class,
@@ -144,8 +152,12 @@ def insert_entries_bulk(entries: list[SpendEntry]) -> int:
         for e in entries
     ]
     with _conn() as con:
+        # total_changes counts across all rows in executemany; changes() only
+        # reflects the final iteration.
+        before = con.total_changes
         con.executemany(sql, rows)
-    return len(rows)
+        inserted = con.total_changes - before
+    return inserted
 
 
 def fetch_entries(
@@ -173,8 +185,9 @@ def fetch_entries(
         params.append(until.isoformat())
 
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
-    # limit is an integer — safe to interpolate
-    sql = f"SELECT * FROM spend_entries {where} ORDER BY timestamp DESC LIMIT {int(limit)}"
+    # LIMIT via a bound parameter — keeps every value out of the SQL string.
+    params.append(int(limit))
+    sql = f"SELECT * FROM spend_entries {where} ORDER BY timestamp DESC LIMIT ?"
 
     with _conn() as con:
         rows = con.execute(sql, params).fetchall()
