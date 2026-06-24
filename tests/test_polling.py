@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.models import EntrySource, Provider
+from src.polling.anthropic import _check_status as anthropic_check_status
 from src.polling.anthropic import _parse_ts
 from src.polling.anthropic import _to_entry as anthropic_to_entry
 from src.polling.base import mask_key, validate_key_format
@@ -15,6 +16,7 @@ from src.polling.cursor import _check_status as cursor_check_status
 from src.polling.cursor import _ms
 from src.polling.cursor import _parse_ts as cursor_parse_ts
 from src.polling.cursor import _to_entry as cursor_to_entry
+from src.polling.openai import _check_status as openai_check_status
 from src.polling.openai import _to_entry as openai_to_entry
 
 # ── Key format validation ────────────────────────────────────────────────────
@@ -459,3 +461,275 @@ class TestGeminiPoll:
         assert len(errors) == 1
         assert "Google" in errors[0]
         assert "BigQuery" in errors[0]
+
+
+# ── Anthropic poll() ──────────────────────────────────────────────────────────
+
+class TestAnthropicCheckStatus:
+    def _resp(self, code: int, text: str = "") -> MagicMock:
+        r = MagicMock()
+        r.is_success = code < 400
+        r.status_code = code
+        r.text = text
+        return r
+
+    def test_200_ok(self):
+        assert anthropic_check_status(self._resp(200)) == []
+
+    def test_401(self):
+        errs = anthropic_check_status(self._resp(401))
+        assert any("401" in e for e in errs)
+
+    def test_403(self):
+        errs = anthropic_check_status(self._resp(403))
+        assert any("403" in e for e in errs)
+        assert any("usage" in e.lower() for e in errs)
+
+    def test_404(self):
+        errs = anthropic_check_status(self._resp(404))
+        assert any("404" in e for e in errs)
+
+    def test_429(self):
+        errs = anthropic_check_status(self._resp(429))
+        assert any("429" in e for e in errs)
+
+    def test_generic_error(self):
+        errs = anthropic_check_status(self._resp(500, "server error"))
+        assert any("500" in e for e in errs)
+
+
+class TestAnthropicPoll:
+    def _mock_resp(self, body: dict, status: int = 200) -> MagicMock:
+        r = MagicMock()
+        r.is_success = status < 400
+        r.status_code = status
+        r.json.return_value = body
+        r.text = ""
+        return r
+
+    def _valid_item(self) -> dict:
+        return {
+            "model": "claude-opus-4",
+            "input_tokens": 10000,
+            "output_tokens": 2000,
+            "timestamp": "2026-06-01T12:00:00Z",
+            "cost_usd": 0.18,
+        }
+
+    def test_successful_poll_returns_entries(self):
+        resp = self._mock_resp({"data": [self._valid_item()]})
+        with patch("src.polling.anthropic.safe_get", return_value=resp):
+            from src.polling.anthropic import poll
+            entries, errors = poll(
+                "sk-ant-api03-" + "A" * 90,
+                since=date(2026, 6, 1),
+                until=date(2026, 6, 1),
+            )
+        assert errors == []
+        assert len(entries) == 1
+        assert entries[0].provider == Provider.anthropic
+
+    def test_poll_with_models_key(self):
+        resp = self._mock_resp({"models": [self._valid_item()]})
+        with patch("src.polling.anthropic.safe_get", return_value=resp):
+            from src.polling.anthropic import poll
+            entries, errors = poll("sk-ant-api03-" + "A" * 90)
+        assert len(entries) == 1
+
+    def test_poll_401_returns_error(self):
+        resp = self._mock_resp({}, status=401)
+        with patch("src.polling.anthropic.safe_get", return_value=resp):
+            from src.polling.anthropic import poll
+            entries, errors = poll("sk-ant-api03-" + "A" * 90)
+        assert entries == []
+        assert any("401" in e for e in errors)
+
+    def test_poll_timeout_returns_error(self):
+        import httpx
+        with patch(
+            "src.polling.anthropic.safe_get",
+            side_effect=httpx.TimeoutException("t"),
+        ):
+            from src.polling.anthropic import poll
+            _, errors = poll("sk-ant-api03-" + "A" * 90)
+        assert any("timed out" in e for e in errors)
+
+    def test_poll_network_error(self):
+        import httpx
+        with patch(
+            "src.polling.anthropic.safe_get",
+            side_effect=httpx.ConnectError("conn refused"),
+        ):
+            from src.polling.anthropic import poll
+            _, errors = poll("sk-ant-api03-" + "A" * 90)
+        assert any("Network error" in e for e in errors)
+
+    def test_poll_invalid_json_returns_error(self):
+        resp = MagicMock()
+        resp.is_success = True
+        resp.status_code = 200
+        resp.json.side_effect = ValueError("bad json")
+        with patch("src.polling.anthropic.safe_get", return_value=resp):
+            from src.polling.anthropic import poll
+            _, errors = poll("sk-ant-api03-" + "A" * 90)
+        assert any("parse" in e for e in errors)
+
+    def test_poll_non_list_data_returns_error(self):
+        resp = self._mock_resp({"data": "not-a-list"})
+        with patch("src.polling.anthropic.safe_get", return_value=resp):
+            from src.polling.anthropic import poll
+            _, errors = poll("sk-ant-api03-" + "A" * 90)
+        assert any("Unexpected" in e for e in errors)
+
+    def test_poll_ssrf_blocked(self):
+        with patch(
+            "src.polling.anthropic.safe_get",
+            side_effect=ValueError("Blocked request"),
+        ):
+            from src.polling.anthropic import poll
+            _, errors = poll("sk-ant-api03-" + "A" * 90)
+        assert any("Blocked" in e for e in errors)
+
+    def test_poll_defaults_date_range(self):
+        resp = self._mock_resp({"data": []})
+        with patch("src.polling.anthropic.safe_get", return_value=resp) as mock_get:
+            from src.polling.anthropic import poll
+            poll("sk-ant-api03-" + "A" * 90)
+        mock_get.assert_called_once()
+
+
+# ── OpenAI poll() ─────────────────────────────────────────────────────────────
+
+class TestOpenAICheckStatus:
+    def _resp(self, code: int, text: str = "") -> MagicMock:
+        r = MagicMock()
+        r.is_success = code < 400
+        r.status_code = code
+        r.text = text
+        return r
+
+    def test_200_ok(self):
+        assert openai_check_status(self._resp(200), date.today()) == []
+
+    def test_401(self):
+        errs = openai_check_status(self._resp(401), date.today())
+        assert any("401" in e for e in errs)
+
+    def test_403(self):
+        errs = openai_check_status(self._resp(403), date.today())
+        assert any("403" in e for e in errs)
+
+    def test_429(self):
+        errs = openai_check_status(self._resp(429), date.today())
+        assert any("429" in e for e in errs)
+
+    def test_generic_error(self):
+        errs = openai_check_status(self._resp(500, "server error"), date.today())
+        assert any("500" in e for e in errs)
+
+
+class TestOpenAIPoll:
+    def _mock_resp(self, body: dict, status: int = 200) -> MagicMock:
+        r = MagicMock()
+        r.is_success = status < 400
+        r.status_code = status
+        r.json.return_value = body
+        r.text = ""
+        return r
+
+    def _valid_item(self) -> dict:
+        return {
+            "snapshot_id": "gpt-4o",
+            "n_context_tokens_total": 8000,
+            "n_generated_tokens_total": 1500,
+            "aggregation_timestamp": 1748793600,
+        }
+
+    def test_successful_poll_returns_entries(self):
+        resp = self._mock_resp({"data": [self._valid_item()]})
+        with patch("src.polling.openai.safe_get", return_value=resp):
+            from src.polling.openai import poll
+            entries, errors = poll(
+                "sk-" + "A" * 40,
+                since=date(2026, 6, 1),
+                until=date(2026, 6, 1),
+            )
+        assert errors == []
+        assert len(entries) == 1
+
+    def test_poll_stops_on_401(self):
+        resp = self._mock_resp({}, status=401)
+        with patch("src.polling.openai.safe_get", return_value=resp):
+            from src.polling.openai import poll
+            entries, errors = poll(
+                "sk-bad", since=date(2026, 6, 1), until=date(2026, 6, 3)
+            )
+        assert entries == []
+        assert any("401" in e for e in errors)
+
+    def test_poll_stops_on_403(self):
+        resp = self._mock_resp({}, status=403)
+        with patch("src.polling.openai.safe_get", return_value=resp):
+            from src.polling.openai import poll
+            _, errors = poll(
+                "sk-bad", since=date(2026, 6, 1), until=date(2026, 6, 3)
+            )
+        assert any("403" in e for e in errors)
+
+    def test_poll_day_timeout(self):
+        import httpx
+        with patch(
+            "src.polling.openai.safe_get",
+            side_effect=httpx.TimeoutException("t"),
+        ):
+            from src.polling.openai import _poll_day
+            _, errors = _poll_day("sk-" + "A" * 40, date(2026, 6, 1))
+        assert any("Timeout" in e for e in errors)
+
+    def test_poll_day_network_error(self):
+        import httpx
+        with patch(
+            "src.polling.openai.safe_get",
+            side_effect=httpx.ConnectError("conn"),
+        ):
+            from src.polling.openai import _poll_day
+            _, errors = _poll_day("sk-" + "A" * 40, date(2026, 6, 1))
+        assert any("Network error" in e for e in errors)
+
+    def test_poll_day_invalid_json(self):
+        resp = MagicMock()
+        resp.is_success = True
+        resp.status_code = 200
+        resp.json.side_effect = ValueError("bad")
+        with patch("src.polling.openai.safe_get", return_value=resp):
+            from src.polling.openai import _poll_day
+            _, errors = _poll_day("sk-" + "A" * 40, date(2026, 6, 1))
+        assert any("parse" in e for e in errors)
+
+    def test_poll_day_ssrf_blocked(self):
+        with patch(
+            "src.polling.openai.safe_get",
+            side_effect=ValueError("Blocked"),
+        ):
+            from src.polling.openai import _poll_day
+            _, errors = _poll_day("sk-" + "A" * 40, date(2026, 6, 1))
+        assert any("Blocked" in e for e in errors)
+
+    def test_poll_defaults_date_range(self):
+        resp = self._mock_resp({"data": []})
+        with patch("src.polling.openai.safe_get", return_value=resp):
+            from src.polling.openai import poll
+            poll("sk-" + "A" * 40)
+
+
+# ── safe_post SSRF ────────────────────────────────────────────────────────────
+
+class TestSafePost:
+    def test_disallowed_host_raises(self):
+        from src.polling.base import safe_post
+        with pytest.raises(ValueError, match="disallowed host"):
+            safe_post("https://evil.example.com/steal", headers={})
+
+    def test_cursor_host_allowed_in_allowlist(self):
+        from src.polling.base import _ALLOWED_HOSTS
+        assert "api.cursor.com" in _ALLOWED_HOSTS

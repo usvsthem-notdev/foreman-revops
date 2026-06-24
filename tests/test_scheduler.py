@@ -11,6 +11,7 @@ from src.polling.scheduler import (
     _heartbeat_path,
     load_config,
     read_heartbeat,
+    run_once,
     write_heartbeat,
 )
 
@@ -164,3 +165,134 @@ class TestHeartbeat:
         path = _heartbeat_path()
         assert path.parent == db.parent
         assert path.name == ".scheduler_heartbeat"
+
+    def test_write_heartbeat_oserror_does_not_raise(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+        with patch("src.polling.scheduler.Path.write_text", side_effect=OSError("no disk")):
+            write_heartbeat(["anthropic"], errors=0)  # must not raise
+
+    def test_read_heartbeat_oserror_returns_none(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+        # Create the file so it exists, then make read fail
+        hb_path = tmp_path / ".scheduler_heartbeat"
+        hb_path.write_text("timestamp=2026-06-01\n")
+        with patch("src.polling.scheduler.Path.read_text", side_effect=OSError("perm")):
+            result = read_heartbeat()
+        assert result is None
+
+
+# ── run_once ──────────────────────────────────────────────────────────────────
+
+class TestRunOnce:
+    def _config(self, poller=None):
+        if poller is None:
+            poller = lambda key, since, until: ([], [])  # noqa: E731
+        return {
+            "interval_hours": 6,
+            "lookback_days": 2,
+            "providers": {"anthropic": poller},
+        }
+
+    def test_skips_provider_not_due(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+        with (
+            patch("src.polling.scheduler._due_for_poll", return_value=False),
+            patch("src.polling.scheduler.get_key", return_value="sk-ant-api03-" + "A" * 90),
+        ):
+            polled, errors = run_once(self._config())
+        assert polled == []
+        assert errors == 0
+
+    def test_skips_when_key_disappears(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+        with (
+            patch("src.polling.scheduler._due_for_poll", return_value=True),
+            patch("src.polling.scheduler.get_key", return_value=None),
+        ):
+            polled, errors = run_once(self._config())
+        assert polled == []
+
+    def test_polls_and_inserts(self, tmp_path, monkeypatch):
+        from src.models import EntrySource, Provider, SpendEntry
+        from datetime import datetime as dt
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+        fake_entry = SpendEntry(
+            timestamp=dt(2026, 6, 1),
+            provider=Provider.anthropic,
+            model="claude-opus-4",
+            input_tokens=1000,
+            output_tokens=200,
+            cost_usd=0.1,
+            source=EntrySource.api,
+        )
+        mock_poller = lambda key, since, until: ([fake_entry], [])  # noqa: E731
+        with (
+            patch("src.polling.scheduler._due_for_poll", return_value=True),
+            patch("src.polling.scheduler.get_key", return_value="sk-ant-api03-" + "A" * 90),
+            patch("src.polling.scheduler.insert_entries_bulk", return_value=1),
+            patch("src.polling.scheduler.set_poll_cursor"),
+        ):
+            polled, total_errors = run_once(self._config(poller=mock_poller))
+        assert "anthropic" in polled
+        assert total_errors == 0
+
+    def test_counts_poller_errors(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+        mock_poller = lambda key, since, until: ([], ["err1", "err2"])  # noqa: E731
+        with (
+            patch("src.polling.scheduler._due_for_poll", return_value=True),
+            patch("src.polling.scheduler.get_key", return_value="sk-ant-api03-" + "A" * 90),
+            patch("src.polling.scheduler.insert_entries_bulk", return_value=0),
+            patch("src.polling.scheduler.set_poll_cursor"),
+        ):
+            polled, total_errors = run_once(self._config(poller=mock_poller))
+        assert total_errors == 2
+
+    def test_handles_poller_exception(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+        def bad_poller(key, since, until):
+            raise RuntimeError("unexpected!")
+        with (
+            patch("src.polling.scheduler._due_for_poll", return_value=True),
+            patch("src.polling.scheduler.get_key", return_value="sk-ant-api03-" + "A" * 90),
+        ):
+            polled, total_errors = run_once(self._config(poller=bad_poller))
+        assert polled == []
+        assert total_errors == 1
+
+    def test_no_entries_returned_still_sets_cursor(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+        mock_poller = lambda key, since, until: ([], [])  # noqa: E731
+        with (
+            patch("src.polling.scheduler._due_for_poll", return_value=True),
+            patch("src.polling.scheduler.get_key", return_value="sk-ant-api03-" + "A" * 90),
+            patch("src.polling.scheduler.insert_entries_bulk", return_value=0) as mock_insert,
+            patch("src.polling.scheduler.set_poll_cursor") as mock_cursor,
+        ):
+            polled, _ = run_once(self._config(poller=mock_poller))
+        mock_insert.assert_not_called()
+        mock_cursor.assert_called_once()
+        assert "anthropic" in polled
+
+
+# ── load_config edge cases ────────────────────────────────────────────────────
+
+class TestLoadConfigEdgeCases:
+    def _set_env(self, monkeypatch, **kwargs):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY",    raising=False)
+        monkeypatch.delenv("CURSOR_API_KEY",    raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY",    raising=False)
+        for k, v in kwargs.items():
+            monkeypatch.setenv(k, str(v))
+
+    def test_bad_lookback_falls_back_to_default(self, monkeypatch, tmp_path):
+        monkeypatch.setattr("src.polling.key_store._ENV_LOCAL", tmp_path / ".env.local")
+        self._set_env(
+            monkeypatch,
+            ANTHROPIC_API_KEY="sk-ant-api03-" + "K" * 90,
+            FOREMAN_POLL_PROVIDERS="anthropic",
+            FOREMAN_POLL_LOOKBACK_DAYS="not-a-number",
+        )
+        config = load_config()
+        assert config["lookback_days"] == 2  # default
