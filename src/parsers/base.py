@@ -5,9 +5,8 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Optional
 
-from src.models import Provider, WorkloadClass
+from src.models import WorkloadClass
 
 # Map model name fragments → workload class heuristic
 _MODEL_CLASS_HINTS: list[tuple[re.Pattern, WorkloadClass]] = [
@@ -47,7 +46,7 @@ def infer_is_local(model: str) -> bool:
     return bool(_LOCAL_MODEL_PATTERNS.search(model))
 
 
-def parse_date_flexible(raw: str) -> Optional[datetime]:
+def parse_date_flexible(raw: str) -> datetime | None:
     """Try several common date formats."""
     formats = [
         "%Y-%m-%d",

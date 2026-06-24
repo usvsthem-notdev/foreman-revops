@@ -1,16 +1,15 @@
 """Tests for burn map analytics and spend intelligence."""
+
 import pandas as pd
 import pytest
-from datetime import datetime, timedelta
 
 from src.analytics.burn_map import (
     burn_by_class,
-    burn_by_model,
     burn_rate_projection,
     daily_burn,
     key_metrics,
 )
-from src.analytics.intelligence import detect, generate_report, propose
+from src.analytics.intelligence import detect, generate_report
 
 
 def _make_df(rows: list[dict]) -> pd.DataFrame:

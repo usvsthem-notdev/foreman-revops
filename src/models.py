@@ -4,7 +4,6 @@ import re
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -60,20 +59,20 @@ class SpendEntry(BaseModel):
     reasoning_tokens: int = Field(ge=0, default=0)
     cost_usd: float = Field(ge=0.0)
     is_local: bool = False  # sage = True (absorbed), clay = False (frontier)
-    team: Optional[str] = Field(default=None, max_length=64)
-    feature: Optional[str] = Field(default=None, max_length=128)
-    notes: Optional[str] = Field(default=None, max_length=512)
+    team: str | None = Field(default=None, max_length=64)
+    feature: str | None = Field(default=None, max_length=128)
+    notes: str | None = Field(default=None, max_length=512)
     source: EntrySource = EntrySource.manual
 
     @field_validator("model", "team", "feature", "notes", mode="before")
     @classmethod
-    def strip_strings(cls, v: Optional[str]) -> Optional[str]:
+    def strip_strings(cls, v: str | None) -> str | None:
         if v is None:
             return v
         return str(v).strip()
 
     @model_validator(mode="after")
-    def total_tokens_positive(self) -> "SpendEntry":
+    def total_tokens_positive(self) -> SpendEntry:
         total = self.input_tokens + self.output_tokens + self.reasoning_tokens
         if total == 0 and self.cost_usd > 0:
             pass  # allow cost-only entries (e.g., from invoices)
@@ -85,14 +84,14 @@ class Budget(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     amount_usd: float = Field(gt=0)
     period: BudgetPeriod
-    provider: Optional[Provider] = None
-    team: Optional[str] = Field(default=None, max_length=64)
+    provider: Provider | None = None
+    team: str | None = Field(default=None, max_length=64)
     alert_threshold: float = Field(default=0.8, ge=0.0, le=1.0)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     @field_validator("name", "team", mode="before")
     @classmethod
-    def strip_strings(cls, v: Optional[str]) -> Optional[str]:
+    def strip_strings(cls, v: str | None) -> str | None:
         if v is None:
             return v
         return str(v).strip()

@@ -7,16 +7,16 @@ HF:   This file is the Hugging Face Spaces entry point.
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timedelta
 
 import streamlit as st
 
+from src.analytics.burn_map import budget_status, load_dataframe
+
 # Bootstrap DB before any other src imports that might read it
 from src.db import fetch_budgets, init_db
-from src.analytics.burn_map import budget_status, load_dataframe
 from src.ui import bill_analyzer, burn_map, entry, intelligence, settings
-from src.ui.theme import CSS, BONE, CLAY, SAGE, SLATE
+from src.ui.theme import BONE, CSS
 
 logging.basicConfig(
     level=logging.INFO,
