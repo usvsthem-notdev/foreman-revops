@@ -15,6 +15,7 @@ from src.analytics.burn_map import budget_status, load_dataframe
 
 # Bootstrap DB before any other src imports that might read it
 from src.db import fetch_budgets, init_db
+from src.demo import seed_if_empty
 from src.ui import api_poll, bill_analyzer, burn_map, entry, intelligence, settings
 from src.ui.theme import BONE, CSS
 
@@ -47,10 +48,11 @@ st.markdown(CSS, unsafe_allow_html=True)
 # ---------------------------------------------------------------------------
 
 @st.cache_resource
-def _init() -> None:
+def _init() -> bool:
     init_db()
+    return seed_if_empty()
 
-_init()
+_demo_mode = _init()
 
 # ---------------------------------------------------------------------------
 # Sidebar — filters
@@ -99,10 +101,14 @@ with st.sidebar:
     team_filter = st.text_input("Team", placeholder="all teams", max_chars=64)
 
     st.divider()
-    st.caption(
-        "Data is stored locally.  \n"
-        "No telemetry. No external calls."
-    )
+    if _demo_mode:
+        st.info(
+            "**Sample data** — 60-day simulation across 4 providers.  \n"
+            "Connect real keys in the **Live API** tab to see your own spend.",
+            icon="ℹ️",
+        )
+    else:
+        st.caption("Data is stored locally. No telemetry.")
 
 # ---------------------------------------------------------------------------
 # Load data (cached per filter combination)
