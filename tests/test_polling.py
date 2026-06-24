@@ -10,6 +10,8 @@ from src.models import EntrySource, Provider
 from src.polling.anthropic import _parse_ts
 from src.polling.anthropic import _to_entry as anthropic_to_entry
 from src.polling.base import mask_key, validate_key_format
+from src.polling.cursor import _parse_ts as cursor_parse_ts
+from src.polling.cursor import _to_entry as cursor_to_entry
 from src.polling.openai import _to_entry as openai_to_entry
 
 # ── Key format validation ────────────────────────────────────────────────────
@@ -35,6 +37,20 @@ class TestValidateKeyFormat:
 
     def test_invalid_openai_key_too_short(self):
         err = validate_key_format("openai", "sk-abc")
+        assert err is not None
+
+    def test_valid_cursor_key(self):
+        assert validate_key_format("cursor", "crsr_" + "A" * 40) is None
+
+    def test_invalid_cursor_key_missing_prefix(self):
+        err = validate_key_format("cursor", "A" * 40)
+        assert err is not None
+
+    def test_valid_gemini_key(self):
+        assert validate_key_format("gemini", "AIzaSy" + "A" * 33) is None
+
+    def test_invalid_gemini_key_wrong_prefix(self):
+        err = validate_key_format("gemini", "sk-" + "A" * 36)
         assert err is not None
 
 
@@ -126,6 +142,7 @@ class TestSafeGet:
         from src.polling.base import _ALLOWED_HOSTS
         assert "api.anthropic.com" in _ALLOWED_HOSTS
         assert "api.openai.com" in _ALLOWED_HOSTS
+        assert "api.cursor.com" in _ALLOWED_HOSTS
 
 
 # ── Entry parsing — Anthropic ────────────────────────────────────────────────
@@ -231,3 +248,84 @@ class TestOpenAIEntryParsing:
         entry = openai_to_entry(item, day)
         assert entry is not None
         assert entry.timestamp.date() == day
+
+
+# ── Entry parsing — Cursor ───────────────────────────────────────────────────
+
+class TestCursorEntryParsing:
+    def _event(self, **overrides):
+        base = {
+            "model": "claude-3.5-sonnet",
+            "kind": "chat",
+            "isTokenBasedCall": True,
+            "isChargeable": True,
+            "timestamp": 1748793600000,  # epoch ms
+            "tokenUsage": {
+                "inputTokens": 5000,
+                "outputTokens": 1000,
+                "cacheReadTokens": 200,
+                "cacheWriteTokens": 0,
+                "totalCents": 0.09,
+            },
+            "chargedCents": 9,
+        }
+        return {**base, **overrides}
+
+    def test_basic_entry(self):
+        entry = cursor_to_entry(self._event())
+        assert entry is not None
+        assert entry.provider == Provider.cursor
+        assert entry.input_tokens == 5000
+        assert entry.output_tokens == 1000
+        assert entry.source == EntrySource.cursor_api
+
+    def test_cost_from_charged_cents(self):
+        entry = cursor_to_entry(self._event(chargedCents=50))
+        assert entry is not None
+        assert entry.cost_usd == pytest.approx(0.50)
+
+    def test_cache_tokens_stored_as_reasoning(self):
+        entry = cursor_to_entry(self._event())
+        assert entry is not None
+        assert entry.reasoning_tokens == 200
+
+    def test_non_token_call_returns_none(self):
+        assert cursor_to_entry(self._event(isTokenBasedCall=False)) is None
+
+    def test_missing_model_returns_none(self):
+        assert cursor_to_entry(self._event(model="")) is None
+
+    def test_zero_tokens_returns_none(self):
+        event = self._event()
+        event["tokenUsage"]["inputTokens"] = 0
+        event["tokenUsage"]["outputTokens"] = 0
+        assert cursor_to_entry(event) is None
+
+    def test_ms_timestamp_parsed(self):
+        entry = cursor_to_entry(self._event(timestamp=1748793600000))
+        assert entry is not None
+        assert entry.timestamp == datetime.utcfromtimestamp(1748793600)
+
+    def test_team_set_from_email(self):
+        entry = cursor_to_entry(self._event(userEmail="alice@example.com"))
+        assert entry is not None
+        assert entry.team == "alice@example.com"
+
+    def test_feature_set_from_kind(self):
+        entry = cursor_to_entry(self._event(kind="agent"))
+        assert entry is not None
+        assert entry.feature == "agent"
+
+
+class TestCursorParseTs:
+    def test_ms_epoch(self):
+        ts = cursor_parse_ts(1748793600000)
+        assert ts == datetime.utcfromtimestamp(1748793600)
+
+    def test_iso_string(self):
+        ts = cursor_parse_ts("2026-06-01T12:00:00Z")
+        assert ts is not None
+        assert ts.year == 2026
+
+    def test_none_returns_none(self):
+        assert cursor_parse_ts(None) is None

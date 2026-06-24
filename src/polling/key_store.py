@@ -22,6 +22,8 @@ _ENV_LOCAL    = _PROJECT_ROOT / ".env.local"
 _ENV_NAMES: dict[str, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai":    "OPENAI_API_KEY",
+    "cursor":    "CURSOR_API_KEY",
+    "gemini":    "GEMINI_API_KEY",
 }
 
 _LINE_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=(.+)$")

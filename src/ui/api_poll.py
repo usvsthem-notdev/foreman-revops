@@ -19,6 +19,7 @@ import streamlit as st
 
 from src.db import get_poll_cursor, insert_entries_bulk, set_poll_cursor
 from src.polling import anthropic as anthropic_poller
+from src.polling import cursor as cursor_poller
 from src.polling import openai as openai_poller
 from src.polling.base import mask_key, validate_key_format
 from src.polling.key_store import clear_key, get_key, has_key, key_source, set_key
@@ -46,6 +47,16 @@ _PROVIDERS = {
             "[platform.openai.com/api-keys](https://platform.openai.com/api-keys)."
         ),
     },
+    "cursor": {
+        "label":  "Cursor",
+        "poller": cursor_poller.poll,
+        "key_hint": "crsr_…",
+        "scope_note": (
+            "Requires a **Team or Business plan** and an admin API key. "
+            "Create one at [cursor.com/dashboard](https://cursor.com/dashboard) "
+            "→ Settings → Advanced → Admin API Keys."
+        ),
+    },
 }
 
 
@@ -62,13 +73,21 @@ def render() -> None:
     _render_scheduler_status()
     st.divider()
 
-    tab_anthropic, tab_openai = st.tabs(["Anthropic", "OpenAI"])
+    tab_anthropic, tab_openai, tab_cursor, tab_gemini = st.tabs(
+        ["Anthropic", "OpenAI", "Cursor", "Gemini"]
+    )
 
     with tab_anthropic:
         _render_provider("anthropic")
 
     with tab_openai:
         _render_provider("openai")
+
+    with tab_cursor:
+        _render_provider("cursor")
+
+    with tab_gemini:
+        _render_gemini_info()
 
 
 # ── Scheduler status banner ──────────────────────────────────────────────────
@@ -274,7 +293,47 @@ def _run_poll(provider: str, cfg: dict, since: date, until: date) -> None:
         )
 
 
+# ── Gemini info panel ─────────────────────────────────────────────────────────
+
+def _render_gemini_info() -> None:
+    st.markdown("##### Gemini / Google AI Studio")
+    st.info(
+        "**Google does not expose a usage API for AI Studio keys.**  \n"
+        "The Generative Language API (`AIzaSy…` keys) returns token counts "
+        "inline with each inference call but provides no historical usage endpoint.  \n\n"
+        "**To import Gemini spend data:**  \n"
+        "1. In [Google Cloud Console](https://console.cloud.google.com) → Billing → "
+        "Export, configure a BigQuery billing export.  \n"
+        "2. Query the `gcp_billing_export_v1_*` table filtering on the Gemini SKU "
+        "and download a CSV.  \n"
+        "3. Import it in the **Bill Analyzer** tab.  \n\n"
+        "You can also add Gemini entries manually via the **Add Entry** tab and "
+        "select *Gemini* as the provider."
+    )
+    st.markdown("##### Recognized Gemini models")
+    st.caption(
+        "These models are already recognized for workload-class inference and charting:"
+    )
+    st.code(
+        "gemini-2.5-pro\n"
+        "gemini-2.5-flash\n"
+        "gemini-2.0-flash\n"
+        "gemini-1.5-pro\n"
+        "gemini-1.5-flash\n"
+        "gemini-1.0-pro",
+        language=None,
+    )
+
+
 # ── Utilities ────────────────────────────────────────────────────────────────
 
+_ENV_NAME_MAP = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai":    "OPENAI_API_KEY",
+    "cursor":    "CURSOR_API_KEY",
+    "gemini":    "GEMINI_API_KEY",
+}
+
+
 def _env_name(provider: str) -> str:
-    return "ANTHROPIC_API_KEY" if provider == "anthropic" else "OPENAI_API_KEY"
+    return _ENV_NAME_MAP.get(provider, f"{provider.upper()}_API_KEY")

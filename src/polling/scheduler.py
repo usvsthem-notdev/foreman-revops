@@ -38,6 +38,8 @@ from pathlib import Path
 
 from src.db import get_poll_cursor, insert_entries_bulk, set_poll_cursor
 from src.polling import anthropic as anthropic_poller
+from src.polling import cursor as cursor_poller
+from src.polling import gemini as gemini_poller
 from src.polling import openai as openai_poller
 from src.polling.base import mask_key
 from src.polling.key_store import get_key
@@ -85,6 +87,8 @@ def load_config() -> dict:
     _pollers = {
         "anthropic": anthropic_poller.poll,
         "openai":    openai_poller.poll,
+        "cursor":    cursor_poller.poll,
+        "gemini":    gemini_poller.poll,
     }
 
     # Only include providers that both have a registered poller AND a key.

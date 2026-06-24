@@ -12,6 +12,8 @@ class Provider(str, Enum):
     anthropic = "anthropic"
     openai = "openai"
     google = "google"
+    gemini = "gemini"
+    cursor = "cursor"
     mistral = "mistral"
     together = "together"
     other = "other"
@@ -38,6 +40,7 @@ class EntrySource(str, Enum):
     openai_csv = "openai_csv"
     google_csv = "google_csv"
     api = "api"
+    cursor_api = "cursor_api"
 
 
 _SAFE_TEXT = re.compile(r"^[\w\s\-\.\,\:\(\)\/\#\@]+$")

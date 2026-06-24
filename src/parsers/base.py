@@ -18,8 +18,9 @@ _MODEL_CLASS_HINTS: list[tuple[re.Pattern, WorkloadClass]] = [
     (re.compile(r"gpt-3\.5", re.I),                    WorkloadClass.extract),
     (re.compile(r"embed|text-embed", re.I),            WorkloadClass.rag),
     (re.compile(r"code|codex|starcoder", re.I),        WorkloadClass.coding),
-    (re.compile(r"gemini.*pro", re.I),                 WorkloadClass.reason),
-    (re.compile(r"gemini.*flash", re.I),               WorkloadClass.extract),
+    (re.compile(r"gemini.*(2\.5|ultra|pro)", re.I),     WorkloadClass.reason),
+    (re.compile(r"gemini.*(flash|nano)", re.I),        WorkloadClass.extract),
+    (re.compile(r"cursor-small", re.I),                WorkloadClass.coding),
     (re.compile(r"mistral.*large", re.I),              WorkloadClass.reason),
     (re.compile(r"mistral.*(7b|small|8x)", re.I),      WorkloadClass.extract),
 ]
