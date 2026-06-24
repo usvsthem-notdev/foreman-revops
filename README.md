@@ -13,48 +13,23 @@ short_description: Open-source LLM burn map and spend tracker
 
 # Foreman RevOps Tracker
 
-> **The FinOps view that does not yet exist for LLM spend.**  
 > See the burn, follow the burn.
 
-An open-source burn map and spend tracker for LLM API costs — built as the free
-Bill Analyzer described in the [Foreman](https://github.com/usvsthem-notdev/foreman-revops)
-architecture.
-
-All data stays on your machine. No telemetry. No external calls.
+Open-source LLM spend tracker. Upload billing CSVs or wire up live API keys — the burn map updates either way. All data stays local.
 
 ---
 
-## Features
+## What it does
 
-### Burn Map
-Live spend visualization by workload class, provider, and model — split between
-**absorbed locally** (sage) and **frontier spend** (clay), matching FIG. 03 of the
-Foreman architecture.
+**Burn Map** — stacked bar chart split between frontier spend and locally-absorbed cost. Breaks down by workload class (extract · rag · reason · agents · coding), provider, and model. Shows daily burn with a 30-day projection and budget progress bars.
 
-- Stacked bar chart: absorbed vs frontier by workload class (extract · rag · reason · agents · coding)
-- Daily burn with cumulative overlay
-- 30-day spend projection
-- Budget progress tracking with configurable alert thresholds
+**Bill Analyzer** — drop in a CSV from Anthropic, OpenAI, Cursor, or Gemini. The parser auto-detects the provider from headers, handles format variants, and estimates how much of the spend could move to a local model.
 
-### Bill Analyzer
-Upload billing CSVs from Anthropic or OpenAI — parsed entirely in-process.
+**Live Polling** — background scheduler fetches usage from Anthropic, OpenAI, and Cursor APIs on a configurable interval (default: every 6 hours). Stores results to the same SQLite DB the burn map reads from.
 
-- Auto-detects provider from file headers
-- Handles multiple export formats per provider
-- Estimates "absorbable spend" — workloads that could run on a local model
-- One-click import to Burn Map
+**Spend Intelligence** — detect → propose → guardrails loop. Flags concentration risk, reasoning token waste, spend drift, and untagged entries. Generates routing proposals with estimated savings and a quality-floor guardrail note.
 
-### Spend Intelligence
-FIG. 03 loop: **Detect → Propose → Guardrails → Workload Library → Policy Router**
-
-- **Detect**: concentration, drift, reasoning waste, untagged entries
-- **Propose**: backtested routing policy proposals with estimated savings
-- **Guardrails**: quality floor slider, suggest vs auto-apply mode, rollback notes
-- **Workload Library**: class-level routing guidance
-
-### Manual Entry + Data Export
-- Add individual API calls with team/feature attribution
-- Export all data as CSV or JSON
+**Cursor MCP Server** — exposes 8 analytics tools over stdio so Cursor can query spend data directly from the editor. See setup below.
 
 ---
 
@@ -76,59 +51,107 @@ docker compose up
 
 ### Hugging Face Spaces
 
-This repo is structured to deploy directly as a Hugging Face Space (Streamlit SDK).
-The YAML frontmatter above is read by the Spaces runtime.
+The YAML frontmatter above deploys this repo as a Streamlit Space.  
+Note: Spaces has an ephemeral filesystem — data won't persist between restarts. Run locally or with Docker for persistence.
 
-**Note:** HuggingFace Spaces has an ephemeral filesystem — data will not persist
-between restarts. For persistent storage, run locally or with Docker.
+---
+
+## Live polling setup
+
+Set API keys and start the scheduler alongside the app:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+export CURSOR_API_KEY=crsr_...
+python -m src.polling.scheduler &
+streamlit run app.py
+```
+
+| Variable | Default | Notes |
+|---|---|---|
+| `FOREMAN_POLL_INTERVAL_HOURS` | `6` | Minimum 1 |
+| `FOREMAN_POLL_LOOKBACK_DAYS` | `2` | Maximum 7 |
+| `FOREMAN_POLL_PROVIDERS` | `anthropic,openai` | Comma-separated |
+| `FOREMAN_DB_PATH` | `data/foreman.db` | Must be inside home or `/tmp` |
+
+You can also set keys from the **Live API** tab in the app — they write to `.env.local` and never touch the database.
+
+---
+
+## Cursor MCP integration
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "foreman": {
+      "command": "/path/to/foreman-revops/.venv/bin/python",
+      "args": ["/path/to/foreman-revops/mcp_server.py"],
+      "env": { "FOREMAN_DB_PATH": "/path/to/foreman-revops/data/foreman.db" }
+    }
+  }
+}
+```
+
+Available tools in Cursor:
+
+| Tool | What it returns |
+|---|---|
+| `get_key_metrics` | Total cost, token counts, local absorption %, entry count |
+| `get_burn_by_provider` | Cost breakdown per provider |
+| `get_burn_by_model` | Cost breakdown per model |
+| `get_burn_by_class` | Cost breakdown per workload class |
+| `get_daily_burn` | Day-by-day spend for the last N days |
+| `get_projection` | 30-day spend forecast from recent average |
+| `get_budget_status` | Each budget's used/remaining/over-threshold status |
+| `get_top_spenders` | Models or teams ranked by cost |
+
+---
+
+## Supported providers
+
+| Provider | CSV upload | Live polling |
+|---|---|---|
+| Anthropic | Yes | Yes |
+| OpenAI | Yes | Yes |
+| Cursor | No | Yes |
+| Gemini | Partial (stub) | No — export via BigQuery |
 
 ---
 
 ## Workload classes
 
-| Class | Models typically used | Absorbable? |
-|-------|-----------------------|-------------|
+| Class | Typical models | Absorbable? |
+|---|---|---|
 | `extract` | haiku, gpt-3.5 | High — structured output, local models match quality |
 | `rag` | haiku + embeddings | High — local embedding + small generator works well |
-| `reason` | opus, o1, o3 | Partial — planning steps absorbable, final synthesis often needs frontier |
-| `agents` | sonnet, gpt-4o | Partial — sub-task planning absorbable locally |
-| `coding` | sonnet, gpt-4o | Partial — most code tasks, reserve frontier for hard proofs |
-
-**Sage** = absorbed locally · **Clay** = frontier spend
+| `reason` | opus, o1, o3 | Partial — planning steps can move locally, final synthesis often can't |
+| `agents` | sonnet, gpt-4o | Partial — sub-task planning is a good local candidate |
+| `coding` | sonnet, gpt-4o | Partial — most code tasks; reserve frontier for hard proofs |
 
 ---
 
 ## Security
 
-- All SQL uses parameterized queries (no SQL injection surface)
+- All SQL uses parameterized queries
 - File uploads: 50 MB limit, UTF-8 validation, no disk writes
-- `FOREMAN_DB_PATH` validated to home dir or `/tmp` (no path traversal)
+- `FOREMAN_DB_PATH` validated to home dir or `/tmp` — no path traversal
+- API keys stored in `.env.local` (0o600), never written to the database
+- Outbound network calls: the scheduler and live polling modules make HTTPS requests to provider APIs; the Streamlit app UI makes no outbound calls
 - Docker: non-root user, `no-new-privileges`, read-only root FS
-- No outbound network calls from the app
 
-See [SECURITY.md](.github/SECURITY.md) for the full policy and how to report vulnerabilities.
-
----
-
-## Supported billing export formats
-
-### Anthropic Console
-`Billing → Usage → Export CSV`  
-Columns: Date, Organization, Project, Model, Input tokens, Output tokens, Cache read tokens, Cache write tokens, Cost (USD)
-
-### OpenAI Platform
-`Usage → Export` or `Billing → Download CSV`  
-Multiple formats supported — the parser handles column name variations.
+See [SECURITY.md](.github/SECURITY.md) for the full policy.
 
 ---
 
 ## Roadmap
 
-- [ ] Live API polling (Anthropic / OpenAI usage APIs)
 - [ ] Slack / email budget alerts
 - [ ] Team-level dashboards with RBAC
 - [ ] Golden eval harness for routing policy backtesting
-- [ ] Google Cloud / Vertex billing support
+- [ ] Gemini BigQuery CSV parser
 - [ ] PostgreSQL backend for multi-user deployments
 
 ---
@@ -137,4 +160,4 @@ Multiple formats supported — the parser handles column name variations.
 
 Apache-2.0 — see [LICENSE](LICENSE).
 
-Built on the Foreman architecture by Connor Drexler · Brooklyn, NY.
+Built by Connor Drexler · Brooklyn, NY.
