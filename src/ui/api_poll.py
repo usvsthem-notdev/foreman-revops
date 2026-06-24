@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import logging
+import os
 from datetime import date, datetime, timedelta
 
 import streamlit as st
@@ -21,6 +22,7 @@ from src.polling import anthropic as anthropic_poller
 from src.polling import openai as openai_poller
 from src.polling.base import mask_key, validate_key_format
 from src.polling.key_store import clear_key, get_key, has_key, key_source, set_key
+from src.polling.scheduler import read_heartbeat
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +59,9 @@ def render() -> None:
         "Keys are stored locally in .env.local (0o600) — never in the database."
     )
 
+    _render_scheduler_status()
+    st.divider()
+
     tab_anthropic, tab_openai = st.tabs(["Anthropic", "OpenAI"])
 
     with tab_anthropic:
@@ -64,6 +69,50 @@ def render() -> None:
 
     with tab_openai:
         _render_provider("openai")
+
+
+# ── Scheduler status banner ──────────────────────────────────────────────────
+
+def _render_scheduler_status() -> None:
+    """Show whether the background scheduler is running and when it last ran."""
+    hb = read_heartbeat()
+    if hb is None:
+        st.info(
+            "**Auto-poll scheduler is not running.**  \n"
+            "Start it with `python scheduler.py` (or via Docker Compose) "
+            "to poll automatically on a schedule.  \n"
+            "Use the manual poll buttons below to fetch data on demand."
+        )
+        return
+
+    try:
+        last_ts = datetime.fromisoformat(hb["timestamp"])
+        age_minutes = (datetime.utcnow() - last_ts).total_seconds() / 60
+        providers = hb.get("providers", "—")
+        errors = int(hb.get("errors", 0))
+    except (KeyError, ValueError):
+        st.warning("Scheduler heartbeat file exists but could not be parsed.")
+        return
+
+    interval_h = int(os.environ.get("FOREMAN_POLL_INTERVAL_HOURS", 6))
+    stale_threshold_minutes = interval_h * 60 * 1.5  # 1.5× interval = overdue
+
+    if age_minutes > stale_threshold_minutes:
+        st.warning(
+            f"**Scheduler may have stopped.** Last heartbeat: "
+            f"{last_ts.strftime('%Y-%m-%d %H:%M UTC')} "
+            f"({age_minutes:.0f} min ago) — expected within {interval_h * 60:.0f} min."
+        )
+    else:
+        err_note = f" · {errors} error(s) last cycle" if errors else ""
+        st.success(
+            f"**Auto-poll scheduler running.**  "
+            f"Last ran: {last_ts.strftime('%Y-%m-%d %H:%M UTC')} "
+            f"({age_minutes:.0f} min ago){err_note}  \n"
+            f"Providers: `{providers}` · "
+            f"Interval: `{interval_h}h` · "
+            f"Lookback: `{os.environ.get('FOREMAN_POLL_LOOKBACK_DAYS', 2)}d`"
+        )
 
 
 # ── Per-provider section ─────────────────────────────────────────────────────

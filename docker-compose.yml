@@ -1,20 +1,66 @@
 version: "3.9"
 
+# Both services share the 'foreman_data' volume so the scheduler writes to the
+# same SQLite database (and heartbeat file) that the Streamlit app reads.
+#
+# API keys are injected as environment variables — never baked into the image.
+# Example .env file (gitignored):
+#   ANTHROPIC_API_KEY=sk-ant-api03-...
+#   OPENAI_API_KEY=sk-proj-...
+#   FOREMAN_POLL_INTERVAL_HOURS=6
+#   FOREMAN_POLL_LOOKBACK_DAYS=2
+#   FOREMAN_POLL_PROVIDERS=anthropic,openai
+
+x-common: &common
+  build: .
+  volumes:
+    - foreman_data:/app/data
+  environment:
+    - FOREMAN_DB_PATH=/app/data/foreman.db
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+
 services:
-  foreman-revops:
-    build: .
+  app:
+    <<: *common
     ports:
       - "8501:8501"
-    volumes:
-      - foreman_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  scheduler:
+    <<: *common
+    # Override the image entrypoint to run the scheduler instead of Streamlit.
+    entrypoint: ["python", "scheduler.py"]
     environment:
       - FOREMAN_DB_PATH=/app/data/foreman.db
-    restart: unless-stopped
-    read_only: true
-    tmpfs:
-      - /tmp
-    security_opt:
-      - no-new-privileges:true
+      # Pass provider keys via a .env file or docker-compose environment block:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - FOREMAN_POLL_INTERVAL_HOURS=${FOREMAN_POLL_INTERVAL_HOURS:-6}
+      - FOREMAN_POLL_LOOKBACK_DAYS=${FOREMAN_POLL_LOOKBACK_DAYS:-2}
+      - FOREMAN_POLL_PROVIDERS=${FOREMAN_POLL_PROVIDERS:-anthropic,openai}
+    # No ports — the scheduler makes outbound calls only.
+    healthcheck:
+      # Healthy if the heartbeat file was updated in the last 8 hours.
+      # (8h > max default 6h interval, so a successful poll always refreshes it.)
+      test:
+        - "CMD-SHELL"
+        - >
+          test -f /app/data/.scheduler_heartbeat &&
+          find /app/data/.scheduler_heartbeat -mmin -480 | grep -q .
+      interval: 60s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
 
 volumes:
   foreman_data:
