@@ -733,3 +733,234 @@ class TestSafePost:
     def test_cursor_host_allowed_in_allowlist(self):
         from src.polling.base import _ALLOWED_HOSTS
         assert "api.cursor.com" in _ALLOWED_HOSTS
+
+
+# ── Cursor poll additional branch coverage ────────────────────────────────────
+
+class TestCursorPollCoverage:
+    """Targets missing branches in src/polling/cursor.py."""
+
+    def test_poll_default_dates(self):
+        """Lines 55-58: since/until default correctly when not supplied."""
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.json.return_value = {"usageEvents": []}
+        with patch("src.polling.cursor.safe_post", return_value=mock_resp):
+            from src.polling.cursor import poll
+            entries, errors = poll("crsr_" + "A" * 40)
+        assert errors == []
+
+    def test_poll_pagination(self):
+        """Line 73: page += 1 when a full page is returned."""
+        import src.polling.cursor as cursor_mod
+        page_size = cursor_mod._PAGE_SIZE
+        full_event = {
+            "model": "gpt-4o", "kind": "chat", "isTokenBasedCall": True,
+            "timestamp": 1748793600000,
+            "tokenUsage": {"inputTokens": 100, "outputTokens": 20, "cacheReadTokens": 0},
+            "chargedCents": 1,
+        }
+        full_page = MagicMock()
+        full_page.is_success = True
+        full_page.json.return_value = {"usageEvents": [full_event] * page_size}
+
+        empty_page = MagicMock()
+        empty_page.is_success = True
+        empty_page.json.return_value = {"usageEvents": []}
+
+        with patch("src.polling.cursor.safe_post", side_effect=[full_page, empty_page]):
+            from src.polling.cursor import poll
+            entries, errors = poll(
+                "crsr_" + "A" * 40, since=date(2026, 6, 1), until=date(2026, 6, 30)
+            )
+        assert len(entries) == page_size
+
+    def test_poll_value_error_from_safe_post(self):
+        """Line 104: ValueError raised by safe_post (e.g. SSRF guard)."""
+        with patch("src.polling.cursor.safe_post", side_effect=ValueError("Blocked")):
+            from src.polling.cursor import poll
+            entries, errors = poll("crsr_" + "A" * 40, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert entries == []
+        assert any("Blocked" in e for e in errors)
+
+    def test_poll_request_error(self):
+        """Lines 107-108: httpx.RequestError (e.g. ConnectError)."""
+        import httpx
+        with patch("src.polling.cursor.safe_post", side_effect=httpx.ConnectError("refused")):
+            from src.polling.cursor import poll
+            entries, errors = poll("crsr_" + "A" * 40, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert entries == []
+        assert any("Network error" in e for e in errors)
+
+    def test_poll_invalid_json_response(self):
+        """Lines 116-117: resp.json() raises, returns error message."""
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.json.side_effect = ValueError("not json")
+        with patch("src.polling.cursor.safe_post", return_value=mock_resp):
+            from src.polling.cursor import poll
+            _, errors = poll("crsr_" + "A" * 40, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert any("JSON" in e for e in errors)
+
+    def test_poll_non_list_events(self):
+        """Line 121: usageEvents is not a list → error returned."""
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.json.return_value = {"usageEvents": "not-a-list"}
+        with patch("src.polling.cursor.safe_post", return_value=mock_resp):
+            from src.polling.cursor import poll
+            _, errors = poll("crsr_" + "A" * 40, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert any("Unexpected" in e for e in errors)
+
+    def test_to_entry_exception_skips_event(self):
+        """Lines 129-130: exception in _to_entry is swallowed; event is skipped."""
+        # inputTokens="abc" → int("abc") raises ValueError inside _to_entry
+        bad_event = {
+            "model": "gpt-4o", "isTokenBasedCall": True, "timestamp": 1748793600000,
+            "tokenUsage": {"inputTokens": "abc", "outputTokens": 200},
+            "chargedCents": 1,
+        }
+        good_event = {
+            "model": "gpt-4o", "kind": "chat", "isTokenBasedCall": True,
+            "timestamp": 1748793600000,
+            "tokenUsage": {"inputTokens": 100, "outputTokens": 20, "cacheReadTokens": 0},
+            "chargedCents": 1,
+        }
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.json.return_value = {"usageEvents": [bad_event, good_event]}
+        with patch("src.polling.cursor.safe_post", return_value=mock_resp):
+            from src.polling.cursor import poll
+            entries, errors = poll("crsr_" + "A" * 40, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert len(entries) == 1
+        assert errors == []
+
+
+class TestCursorToEntryEdgeCases:
+    """Targets lines 179-182 and 187 in _to_entry."""
+
+    def _base(self):
+        return {
+            "model": "claude-3.5-sonnet", "kind": "chat",
+            "isTokenBasedCall": True, "timestamp": 1748793600000,
+            "tokenUsage": {"inputTokens": 5000, "outputTokens": 1000, "cacheReadTokens": 0},
+        }
+
+    def test_total_cents_used_when_no_charged_cents(self):
+        """Lines 179-180: totalCents path (chargedCents absent)."""
+        event = self._base()
+        event["tokenUsage"]["totalCents"] = 5.0
+        entry = cursor_to_entry(event)
+        assert entry is not None
+        assert entry.cost_usd == pytest.approx(0.05)
+
+    def test_no_cost_fields_yields_zero_cost(self):
+        """Lines 181-182: else branch — neither chargedCents nor totalCents."""
+        event = self._base()
+        entry = cursor_to_entry(event)
+        assert entry is not None
+        assert entry.cost_usd == 0.0
+
+    def test_null_timestamp_returns_none(self):
+        """Line 187: timestamp=None → _parse_ts returns None → _to_entry returns None."""
+        event = self._base()
+        event["timestamp"] = None
+        assert cursor_to_entry(event) is None
+
+
+class TestCursorParseTsGarbage:
+    def test_unparseable_string_returns_none(self):
+        """Line 220: _parse_ts returns None for a string matching no format."""
+        from src.polling.cursor import _parse_ts
+        assert _parse_ts("!!!not-a-date-at-all!!!") is None
+
+
+# ── Key store coverage ───────────────────────────────────────────────────────
+
+class TestKeyStore:
+    """Targets missing branches in src/polling/key_store.py (lines 39-41, 80, 105, 118-123)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(self, tmp_path, monkeypatch):
+        import src.polling.key_store as ks
+        env_file = tmp_path / ".env.local"
+        monkeypatch.setattr(ks, "_ENV_LOCAL", env_file)
+        for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CURSOR_API_KEY", "GEMINI_API_KEY"):
+            monkeypatch.delenv(name, raising=False)
+        yield env_file
+
+    def test_read_oserror_returns_empty(self, _isolate, monkeypatch):
+        """Lines 39-41: OSError during file read returns {}."""
+        import pathlib
+        import src.polling.key_store as ks
+        _isolate.write_text("ANTHROPIC_API_KEY=sk-test\n")
+        original = pathlib.Path.read_text
+
+        def raises_for_env_file(self, *args, **kwargs):
+            if self == _isolate:
+                raise OSError("Permission denied")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "read_text", raises_for_env_file)
+        assert ks._read() == {}
+
+    def test_set_key_unknown_provider_raises(self, _isolate):
+        """Line 80: set_key with unrecognised provider → ValueError."""
+        from src.polling.key_store import set_key
+        with pytest.raises(ValueError, match="Unknown provider"):
+            set_key("totally_bogus", "some-key")
+
+    def test_clear_key_writes_remaining_keys(self, _isolate):
+        """Line 105: _write(local) is called when sibling keys remain after pop."""
+        import src.polling.key_store as ks
+        _isolate.write_text("ANTHROPIC_API_KEY=sk-ant\nOPENAI_API_KEY=sk-oai\n")
+        ks.clear_key("anthropic")
+        data = ks._read()
+        assert "OPENAI_API_KEY" in data
+        assert "ANTHROPIC_API_KEY" not in data
+
+    def test_key_source_env(self, _isolate, monkeypatch):
+        """Line 120: key_source returns 'env' when env var is set."""
+        from src.polling.key_store import key_source
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-" + "A" * 90)
+        assert key_source("anthropic") == "env"
+
+    def test_key_source_file(self, _isolate):
+        """Line 122: key_source returns 'file' when key is only in .env.local."""
+        import src.polling.key_store as ks
+        _isolate.write_text("ANTHROPIC_API_KEY=sk-ant-test\n")
+        assert ks.key_source("anthropic") == "file"
+
+    def test_key_source_none(self, _isolate):
+        """Line 123: key_source returns 'none' when no key is configured."""
+        from src.polling.key_store import key_source
+        assert key_source("anthropic") == "none"
+
+    def test_set_key_writes_file_and_env(self, _isolate):
+        """Lines 82-83, 92-96: set_key writes to .env.local when env var absent."""
+        import src.polling.key_store as ks
+        key = "sk-ant-api03-" + "A" * 90
+        ks.set_key("anthropic", key)
+        data = ks._read()
+        assert data.get("ANTHROPIC_API_KEY") == key
+
+    def test_set_key_skips_when_env_var_set(self, _isolate, monkeypatch):
+        """Lines 83-90: set_key returns early when env var already set."""
+        import src.polling.key_store as ks
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "already-set")
+        ks.set_key("anthropic", "new-key")
+        assert not _isolate.exists()
+
+    def test_clear_key_removes_file_when_last_key(self, _isolate):
+        """Lines 106-107: clear_key unlinks .env.local when no keys remain."""
+        import src.polling.key_store as ks
+        _isolate.write_text("ANTHROPIC_API_KEY=sk-test\n")
+        ks.clear_key("anthropic")
+        assert not _isolate.exists()
+
+    def test_has_key_returns_bool(self, _isolate):
+        """Line 113: has_key returns False when absent, True when present."""
+        from src.polling.key_store import has_key
+        assert has_key("anthropic") is False
+        _isolate.write_text("ANTHROPIC_API_KEY=sk-test\n")
+        assert has_key("anthropic") is True

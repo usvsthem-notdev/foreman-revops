@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -296,3 +296,75 @@ class TestLoadConfigEdgeCases:
         )
         config = load_config()
         assert config["lookback_days"] == 2  # default
+
+
+# ── _handle_signal and run() loop ─────────────────────────────────────────────
+
+class TestSchedulerRunAndSignal:
+    def test_handle_signal_sets_shutdown(self, monkeypatch):
+        """Lines 255-256: _handle_signal sets _SHUTDOWN = True."""
+        import src.polling.scheduler as sched
+        monkeypatch.setattr(sched, "_SHUTDOWN", False)
+        sched._handle_signal(15, None)
+        assert sched._SHUTDOWN is True
+
+    def test_run_exits_after_single_cycle(self, tmp_path, monkeypatch):
+        """Lines 264-278, 282-285, 288: run() loop with polled providers."""
+        import src.polling.scheduler as sched
+        monkeypatch.setattr(sched, "_SHUTDOWN", False)
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+
+        def fake_run_once(cfg):
+            sched._SHUTDOWN = True
+            return (["anthropic"], 0)
+
+        with (
+            patch("src.polling.scheduler.run_once", side_effect=fake_run_once),
+            patch("src.polling.scheduler.write_heartbeat"),
+            patch("signal.signal"),
+        ):
+            sched.run({"interval_hours": 6, "lookback_days": 2, "providers": {}}, tick_seconds=1)
+
+    def test_run_catches_run_once_exception(self, tmp_path, monkeypatch):
+        """Lines 279-280: exception in run_once is caught and logged."""
+        import src.polling.scheduler as sched
+        monkeypatch.setattr(sched, "_SHUTDOWN", False)
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+
+        call_count = [0]
+
+        def bad_then_shutdown(cfg):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise RuntimeError("boom")
+            sched._SHUTDOWN = True
+            return ([], 0)
+
+        with (
+            patch("src.polling.scheduler.run_once", side_effect=bad_then_shutdown),
+            patch("signal.signal"),
+        ):
+            sched.run({"interval_hours": 6, "lookback_days": 2, "providers": {}}, tick_seconds=0)
+
+        assert call_count[0] == 2
+
+    def test_run_calls_time_sleep(self, tmp_path, monkeypatch):
+        """Line 286: time.sleep is called when _SHUTDOWN is False during tick."""
+        import src.polling.scheduler as sched
+        monkeypatch.setattr(sched, "_SHUTDOWN", False)
+        monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
+
+        slept = [False]
+
+        def fake_sleep(n):
+            slept[0] = True
+            sched._SHUTDOWN = True
+
+        with (
+            patch("src.polling.scheduler.run_once", return_value=([], 0)),
+            patch("time.sleep", side_effect=fake_sleep),
+            patch("signal.signal"),
+        ):
+            sched.run({"interval_hours": 6, "lookback_days": 2, "providers": {}}, tick_seconds=2)
+
+        assert slept[0]

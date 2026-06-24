@@ -3,6 +3,7 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -18,9 +19,11 @@ from src.db import (  # noqa: E402, I001
     delete_entry,
     fetch_budgets,
     fetch_entries,
+    get_poll_cursor,
     init_db,
     insert_entries_bulk,
     insert_entry,
+    set_poll_cursor,
     upsert_budget,
 )
 from src.models import Budget, BudgetPeriod, EntrySource, Provider, SpendEntry, WorkloadClass  # noqa: E402
@@ -140,3 +143,57 @@ class TestBudgets:
         bid = fetch_budgets()[0]["id"]
         delete_budget(bid)
         assert len(fetch_budgets()) == 0
+
+
+# ── Path-safety and _conn rollback ───────────────────────────────────────────
+
+class TestDbPathAndConn:
+    def test_get_db_path_outside_allowed_raises(self, monkeypatch):
+        """Line 38: ValueError when FOREMAN_DB_PATH is outside home/tmp."""
+        from src.db import get_db_path
+        monkeypatch.setenv("FOREMAN_DB_PATH", "/etc/passwd")
+        with pytest.raises(ValueError, match="FOREMAN_DB_PATH must be inside"):
+            get_db_path()
+
+    def test_get_db_path_default_when_no_env(self, monkeypatch):
+        """Line 40: returns default DB path when env var is unset."""
+        from src.db import get_db_path
+        monkeypatch.delenv("FOREMAN_DB_PATH", raising=False)
+        p = get_db_path()
+        assert p.name == "foreman.db"
+
+    def test_conn_rolls_back_and_reraises_on_exception(self):
+        """Lines 54-56: _conn context manager rolls back and re-raises."""
+        from src import db as db_mod
+        with pytest.raises(RuntimeError, match="force-rollback"):
+            with db_mod._conn() as con:
+                raise RuntimeError("force-rollback")
+
+
+# ── fetch_entries until filter ────────────────────────────────────────────────
+
+class TestFetchUntil:
+    def test_filter_by_until_excludes_later_rows(self):
+        """Lines 190-191: until= filter in fetch_entries."""
+        insert_entry(_entry(timestamp=datetime(2026, 4, 1)))
+        insert_entry(_entry(timestamp=datetime(2026, 7, 1)))
+        rows = fetch_entries(until=datetime(2026, 5, 31))
+        assert len(rows) == 1
+        assert rows[0]["model"] == "claude-haiku-4-5"
+
+
+# ── Poll cursors ──────────────────────────────────────────────────────────────
+
+class TestPollCursors:
+    def test_get_poll_cursor_returns_none_when_absent(self):
+        """Lines 254-258: get_poll_cursor returns None for unknown provider."""
+        assert get_poll_cursor("nonexistent_zzz") is None
+
+    def test_set_and_get_poll_cursor(self):
+        """Lines 254-258, 267-276: set then get a poll cursor."""
+        ts = datetime(2026, 6, 15, 10, 0, 0)
+        set_poll_cursor("test_prov_xyz", last_polled=ts, since_date=ts, until_date=ts)
+        result = get_poll_cursor("test_prov_xyz")
+        assert result is not None
+        assert result["provider"] == "test_prov_xyz"
+        assert "2026-06-15" in result["last_polled"]

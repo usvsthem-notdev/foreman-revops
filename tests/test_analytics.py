@@ -9,7 +9,15 @@ from src.analytics.burn_map import (
     daily_burn,
     key_metrics,
 )
-from src.analytics.intelligence import detect, generate_report
+from src.analytics.intelligence import (
+    _detect_concentration,
+    _detect_drift,
+    _detect_reasoning_waste,
+    _detect_untagged,
+    _estimate_model_savings,
+    detect,
+    generate_report,
+)
 
 
 def _make_df(rows: list[dict]) -> pd.DataFrame:
@@ -129,3 +137,88 @@ class TestIntelligence:
         report = generate_report(_empty_df())
         assert report.findings == []
         assert report.proposals == []
+
+
+# ── Intelligence edge cases ───────────────────────────────────────────────────
+
+class TestIntelligenceEdgeCases:
+    def _row(self, date: str, model: str, cost: float, wc: str = "extract",
+             input_tok: int = 100, output_tok: int = 20, reasoning_tok: int = 0):
+        return {
+            "timestamp": date, "provider": "anthropic", "model": model,
+            "workload_class": wc, "cost_usd": cost, "is_local": False,
+            "input_tokens": input_tok, "output_tokens": output_tok,
+            "reasoning_tokens": reasoning_tok, "team": "eng",
+        }
+
+    def test_concentration_zero_cost_returns_empty(self):
+        """Line 101: _detect_concentration short-circuits when total cost is 0."""
+        df = _make_df([self._row("2026-06-01", "claude-opus-4", 0.0)])
+        assert _detect_concentration(df) == []
+
+    def test_reasoning_waste_zero_tokens_returns_empty(self):
+        """Line 123: _detect_reasoning_waste short-circuits when total tokens are 0."""
+        df = _make_df([self._row("2026-06-01", "claude-opus-4", 1.0,
+                                 input_tok=0, output_tok=0, reasoning_tok=0)])
+        assert _detect_reasoning_waste(df) == []
+
+    def test_drift_empty_df_returns_empty(self):
+        """Line 146: _detect_drift returns [] for empty DataFrame."""
+        from src.analytics.burn_map import _empty_df
+        assert _detect_drift(_empty_df()) == []
+
+    def test_untagged_empty_df_returns_empty(self):
+        """Line 181: _detect_untagged returns [] for empty DataFrame."""
+        from src.analytics.burn_map import _empty_df
+        assert _detect_untagged(_empty_df()) == []
+
+    def test_drift_spend_up_detected(self):
+        """Lines 157-168: drift finding raised when recent spend >> prior spend."""
+        rows = []
+        # Prior period (days 1-6 relative to max=day14)
+        for i in range(1, 7):
+            rows.append(self._row(f"2026-07-{i:02d}", "claude-haiku-4-5", 0.10))
+        # Recent period (days 7-14)
+        for i in range(7, 15):
+            rows.append(self._row(f"2026-07-{i:02d}", "claude-haiku-4-5", 2.00))
+        df = _make_df(rows)
+        findings = _detect_drift(df)
+        assert any(f.category == "drift" and "up" in f.title for f in findings)
+
+    def test_drift_spend_down_detected(self):
+        """Lines 169-174: elif branch when spend drops >30%."""
+        rows = []
+        # Prior period: high spend
+        for i in range(1, 7):
+            rows.append(self._row(f"2026-07-{i:02d}", "claude-haiku-4-5", 2.00))
+        # Recent period: low spend
+        for i in range(7, 15):
+            rows.append(self._row(f"2026-07-{i:02d}", "claude-haiku-4-5", 0.10))
+        df = _make_df(rows)
+        findings = _detect_drift(df)
+        assert any(f.category == "drift" and "down" in f.title for f in findings)
+
+    def test_untagged_above_threshold_detected(self):
+        """Lines 185-197: _detect_untagged creates a Finding when >20% unknown."""
+        rows = [
+            self._row("2026-06-01", "claude-haiku-4-5", 1.0, wc="unknown"),
+            self._row("2026-06-01", "claude-haiku-4-5", 1.0, wc="unknown"),
+            self._row("2026-06-01", "claude-haiku-4-5", 0.1, wc="extract"),
+        ]
+        df = _make_df(rows)
+        findings = _detect_untagged(df)
+        assert any(f.category == "untagged" for f in findings)
+
+    def test_estimate_model_savings_unknown_model_returns_zero(self):
+        """Line 262: _estimate_model_savings returns 0.0 when no alt found."""
+        assert _estimate_model_savings("some-totally-unknown-xyz-llm", 100.0) == 0.0
+
+    def test_concentration_high_severity(self):
+        """Line 107 (severity='high'): model >70% of total spend."""
+        rows = [
+            self._row("2026-06-01", "claude-opus-4", 80.0, wc="reason"),
+            self._row("2026-06-01", "claude-haiku-4-5", 5.0),
+        ]
+        df = _make_df(rows)
+        findings = _detect_concentration(df)
+        assert any(f.severity == "high" for f in findings)
