@@ -407,9 +407,10 @@ class TestCursorPoll:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"usageEvents": [self._fake_event()]}
 
+        key = "crsr_" + "A" * 40
         with patch("src.polling.cursor.safe_post", return_value=mock_resp):
             from src.polling.cursor import poll
-            entries, errors = poll("crsr_" + "A" * 40, since=date(2026, 6, 1), until=date(2026, 6, 1))
+            entries, errors = poll(key, since=date(2026, 6, 1), until=date(2026, 6, 1))
 
         assert errors == []
         assert len(entries) == 1
@@ -423,16 +424,22 @@ class TestCursorPoll:
 
         with patch("src.polling.cursor.safe_post", return_value=mock_resp):
             from src.polling.cursor import poll
-            entries, errors = poll("crsr_bad", since=date(2026, 6, 1), until=date(2026, 6, 2))
+            entries, errors = poll(
+                "crsr_bad", since=date(2026, 6, 1), until=date(2026, 6, 2)
+            )
 
         assert entries == []
         assert any("401" in e for e in errors)
 
     def test_poll_timeout_returns_error(self):
         import httpx
-        with patch("src.polling.cursor.safe_post", side_effect=httpx.TimeoutException("timeout")):
+        key = "crsr_" + "A" * 40
+        with patch(
+            "src.polling.cursor.safe_post",
+            side_effect=httpx.TimeoutException("timeout"),
+        ):
             from src.polling.cursor import poll
-            entries, errors = poll("crsr_" + "A" * 40, since=date(2026, 6, 1), until=date(2026, 6, 1))
+            entries, errors = poll(key, since=date(2026, 6, 1), until=date(2026, 6, 1))
 
         assert entries == []
         assert any("timed out" in e for e in errors)
