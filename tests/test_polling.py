@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import stat
 from datetime import date, datetime
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -10,6 +11,8 @@ from src.models import EntrySource, Provider
 from src.polling.anthropic import _parse_ts
 from src.polling.anthropic import _to_entry as anthropic_to_entry
 from src.polling.base import mask_key, validate_key_format
+from src.polling.cursor import _check_status as cursor_check_status
+from src.polling.cursor import _ms
 from src.polling.cursor import _parse_ts as cursor_parse_ts
 from src.polling.cursor import _to_entry as cursor_to_entry
 from src.polling.openai import _to_entry as openai_to_entry
@@ -329,3 +332,123 @@ class TestCursorParseTs:
 
     def test_none_returns_none(self):
         assert cursor_parse_ts(None) is None
+
+    def test_date_only_string(self):
+        ts = cursor_parse_ts("2026-06-01")
+        assert ts is not None
+        assert ts.year == 2026
+
+
+class TestCursorMs:
+    def test_returns_epoch_ms(self):
+        ms = _ms(date(2026, 1, 1))
+        assert isinstance(ms, int)
+        assert ms > 0
+
+    def test_ms_is_midnight_utc(self):
+        # 2026-01-01 00:00:00 UTC = 1767225600 seconds
+        ms = _ms(date(2026, 1, 1))
+        assert ms == 1767225600000
+
+
+class TestCursorCheckStatus:
+    def _resp(self, code: int, text: str = "") -> MagicMock:
+        r = MagicMock()
+        r.is_success = code < 400
+        r.status_code = code
+        r.text = text
+        return r
+
+    def test_200_returns_empty(self):
+        assert cursor_check_status(self._resp(200)) == []
+
+    def test_401_returns_error(self):
+        errs = cursor_check_status(self._resp(401))
+        assert len(errs) == 1
+        assert "401" in errs[0]
+
+    def test_403_returns_error(self):
+        errs = cursor_check_status(self._resp(403))
+        assert len(errs) == 1
+        assert "403" in errs[0]
+        assert "Team" in errs[0]
+
+    def test_429_returns_error(self):
+        errs = cursor_check_status(self._resp(429))
+        assert len(errs) == 1
+        assert "429" in errs[0]
+
+    def test_500_returns_generic_error(self):
+        errs = cursor_check_status(self._resp(500, "internal error"))
+        assert len(errs) == 1
+        assert "500" in errs[0]
+
+
+class TestCursorPoll:
+    def _fake_event(self):
+        return {
+            "model": "gpt-4o",
+            "kind": "chat",
+            "isTokenBasedCall": True,
+            "timestamp": 1748793600000,
+            "tokenUsage": {
+                "inputTokens": 1000,
+                "outputTokens": 200,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "totalCents": 0.02,
+            },
+            "chargedCents": 2,
+        }
+
+    def test_poll_returns_entries_on_success(self):
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"usageEvents": [self._fake_event()]}
+
+        with patch("src.polling.cursor.safe_post", return_value=mock_resp):
+            from src.polling.cursor import poll
+            entries, errors = poll("crsr_" + "A" * 40, since=date(2026, 6, 1), until=date(2026, 6, 1))
+
+        assert errors == []
+        assert len(entries) == 1
+        assert entries[0].provider == Provider.cursor
+
+    def test_poll_stops_on_401(self):
+        mock_resp = MagicMock()
+        mock_resp.is_success = False
+        mock_resp.status_code = 401
+        mock_resp.text = "Unauthorized"
+
+        with patch("src.polling.cursor.safe_post", return_value=mock_resp):
+            from src.polling.cursor import poll
+            entries, errors = poll("crsr_bad", since=date(2026, 6, 1), until=date(2026, 6, 2))
+
+        assert entries == []
+        assert any("401" in e for e in errors)
+
+    def test_poll_timeout_returns_error(self):
+        import httpx
+        with patch("src.polling.cursor.safe_post", side_effect=httpx.TimeoutException("timeout")):
+            from src.polling.cursor import poll
+            entries, errors = poll("crsr_" + "A" * 40, since=date(2026, 6, 1), until=date(2026, 6, 1))
+
+        assert entries == []
+        assert any("timed out" in e for e in errors)
+
+
+# ── Gemini stub ──────────────────────────────────────────────────────────────
+
+class TestGeminiPoll:
+    def test_poll_returns_no_entries(self):
+        from src.polling.gemini import poll
+        entries, errors = poll("AIzaSy" + "A" * 33)
+        assert entries == []
+
+    def test_poll_returns_explanation(self):
+        from src.polling.gemini import poll
+        _, errors = poll("AIzaSy" + "A" * 33)
+        assert len(errors) == 1
+        assert "Google" in errors[0]
+        assert "BigQuery" in errors[0]
