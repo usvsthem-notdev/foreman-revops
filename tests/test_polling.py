@@ -321,6 +321,36 @@ class TestCursorEntryParsing:
         assert entry is not None
         assert entry.feature == "agent"
 
+    def test_cost_from_total_cents_when_no_charged(self):
+        # chargedCents absent → fall back to totalCents
+        event = self._event()
+        del event["chargedCents"]
+        event["tokenUsage"]["totalCents"] = 0.05
+        entry = cursor_to_entry(event)
+        assert entry is not None
+        assert entry.cost_usd == pytest.approx(0.0005)
+
+    def test_cost_estimated_when_both_absent(self):
+        # Neither chargedCents nor totalCents → estimation fallback
+        event = self._event()
+        del event["chargedCents"]
+        del event["tokenUsage"]["totalCents"]
+        entry = cursor_to_entry(event)
+        assert entry is not None
+        assert entry.cost_usd > 0.0
+
+    def test_bad_timestamp_returns_none(self):
+        entry = cursor_to_entry(self._event(timestamp=None))
+        assert entry is None
+
+    def test_cache_write_tokens_included_in_reasoning(self):
+        event = self._event()
+        event["tokenUsage"]["cacheReadTokens"] = 100
+        event["tokenUsage"]["cacheWriteTokens"] = 50
+        entry = cursor_to_entry(event)
+        assert entry is not None
+        assert entry.reasoning_tokens == 150   # read + write
+
 
 class TestCursorParseTs:
     def test_ms_epoch(self):
@@ -339,6 +369,9 @@ class TestCursorParseTs:
         ts = cursor_parse_ts("2026-06-01")
         assert ts is not None
         assert ts.year == 2026
+
+    def test_unparseable_string_returns_none(self):
+        assert cursor_parse_ts("not-a-date-at-all!!") is None
 
 
 class TestCursorMs:
@@ -445,6 +478,106 @@ class TestCursorPoll:
 
         assert entries == []
         assert any("timed out" in e for e in errors)
+
+    def test_poll_value_error_from_safe_post(self):
+        # safe_post raises ValueError (e.g. SSRF block)
+        key = "crsr_" + "A" * 40
+        with patch("src.polling.cursor.safe_post", side_effect=ValueError("Blocked")):
+            from src.polling.cursor import poll
+            entries, errors = poll(key, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert entries == []
+        assert any("Blocked" in e for e in errors)
+
+    def test_poll_request_error_from_safe_post(self):
+        import httpx
+        key = "crsr_" + "A" * 40
+        with patch(
+            "src.polling.cursor.safe_post",
+            side_effect=httpx.ConnectError("conn refused"),
+        ):
+            from src.polling.cursor import poll
+            entries, errors = poll(key, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert entries == []
+        assert any("Network error" in e for e in errors)
+
+    def test_poll_invalid_json_returns_error(self):
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.status_code = 200
+        mock_resp.json.side_effect = ValueError("bad json")
+        key = "crsr_" + "A" * 40
+        with patch("src.polling.cursor.safe_post", return_value=mock_resp):
+            from src.polling.cursor import poll
+            entries, errors = poll(key, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert entries == []
+        assert any("JSON" in e for e in errors)
+
+    def test_poll_usage_events_not_list(self):
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"usageEvents": "not-a-list"}
+        key = "crsr_" + "A" * 40
+        with patch("src.polling.cursor.safe_post", return_value=mock_resp):
+            from src.polling.cursor import poll
+            entries, errors = poll(key, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert entries == []
+        assert any("Unexpected" in e for e in errors)
+
+    def test_poll_skips_bad_event_silently(self):
+        # chargedCents="abc" causes int() to raise inside _to_entry
+        bad_event = {
+            "model": "gpt-4o",
+            "isTokenBasedCall": True,
+            "timestamp": 1748793600000,
+            "tokenUsage": {"inputTokens": 1000, "outputTokens": 200},
+            "chargedCents": "abc",
+        }
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"usageEvents": [bad_event]}
+        key = "crsr_" + "A" * 40
+        with patch("src.polling.cursor.safe_post", return_value=mock_resp):
+            from src.polling.cursor import poll
+            entries, errors = poll(key, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert entries == []
+        assert errors == []   # logged at DEBUG, not surfaced as error
+
+    def test_poll_default_date_range(self):
+        # Covers the since=None and until=None branches (lines 56, 58)
+        mock_resp = MagicMock()
+        mock_resp.is_success = True
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"usageEvents": []}
+        key = "crsr_" + "A" * 40
+        with patch("src.polling.cursor.safe_post", return_value=mock_resp) as mock_post:
+            from src.polling.cursor import poll
+            poll(key)   # no since / until → defaults applied
+        mock_post.assert_called_once()
+
+    def test_poll_paginates_full_page(self):
+        # First response: exactly _PAGE_SIZE (500) events → triggers page += 1
+        # Second response: 0 events → stops
+        from src.polling.cursor import _PAGE_SIZE
+        full_page = [self._fake_event() for _ in range(_PAGE_SIZE)]
+        resp_full = MagicMock()
+        resp_full.is_success = True
+        resp_full.status_code = 200
+        resp_full.json.return_value = {"usageEvents": full_page}
+        resp_empty = MagicMock()
+        resp_empty.is_success = True
+        resp_empty.status_code = 200
+        resp_empty.json.return_value = {"usageEvents": []}
+        key = "crsr_" + "A" * 40
+        with patch(
+            "src.polling.cursor.safe_post",
+            side_effect=[resp_full, resp_empty],
+        ):
+            from src.polling.cursor import poll
+            entries, errors = poll(key, since=date(2026, 6, 1), until=date(2026, 6, 1))
+        assert len(entries) == _PAGE_SIZE
+        assert errors == []
 
 
 # ── Gemini stub ──────────────────────────────────────────────────────────────
@@ -733,3 +866,71 @@ class TestSafePost:
     def test_cursor_host_allowed_in_allowlist(self):
         from src.polling.base import _ALLOWED_HOSTS
         assert "api.cursor.com" in _ALLOWED_HOSTS
+
+
+# ── Cursor cost estimation ─────────────────────────────────────────────────────
+
+class TestCursorEstimation:
+    def _cost(self, model, input_tok, cache_read=0, cache_write=0, output_tok=0):
+        from src.polling.cursor import _estimate_cursor_cost
+        return _estimate_cursor_cost(model, input_tok, cache_read, cache_write, output_tok)
+
+    def test_claude_cache_read_at_10pct(self):
+        cost_input  = self._cost("claude-sonnet", 1_000_000, 0, 0, 0)
+        cost_cached = self._cost("claude-sonnet", 0, 1_000_000, 0, 0)
+        assert cost_cached == pytest.approx(cost_input * 0.10, rel=1e-6)
+
+    def test_claude_cache_write_at_125pct(self):
+        cost_input = self._cost("claude-sonnet", 1_000_000, 0, 0, 0)
+        cost_write = self._cost("claude-sonnet", 0, 0, 1_000_000, 0)
+        assert cost_write == pytest.approx(cost_input * 1.25, rel=1e-6)
+
+    def test_gpt_cache_read_at_50pct(self):
+        cost_input  = self._cost("gpt-4o", 1_000_000, 0, 0, 0)
+        cost_cached = self._cost("gpt-4o", 0, 1_000_000, 0, 0)
+        assert cost_cached == pytest.approx(cost_input * 0.50, rel=1e-6)
+
+    def test_unknown_model_uses_fallback(self):
+        cost = self._cost("some-unknown-llm", 1_000_000, 0, 0, 0)
+        # fallback: $2.5/M input
+        assert cost == pytest.approx(2.5, rel=1e-6)
+
+    def test_output_tokens_priced_correctly(self):
+        # claude-sonnet output: $15/M
+        cost = self._cost("claude-sonnet", 0, 0, 0, 1_000_000)
+        assert cost == pytest.approx(15.0, rel=1e-4)
+
+
+# ── Gemini pricing ────────────────────────────────────────────────────────────
+
+class TestGeminiPricing:
+    def _cost(self, model, input_tok, cache_read=0, thinking_tok=0, output_tok=0):
+        from src.parsers.gemini import _estimate_gemini_cost
+        return _estimate_gemini_cost(model, input_tok, cache_read, thinking_tok, output_tok)
+
+    def test_flash_cache_read_cheaper_than_input(self):
+        cost_input  = self._cost("gemini-2.5-flash", 1_000_000, 0, 0, 0)
+        cost_cached = self._cost("gemini-2.5-flash", 0, 1_000_000, 0, 0)
+        # Flash cache_read = $0.0375/M vs input = $0.15/M → 25%
+        assert cost_cached == pytest.approx(cost_input * 0.25, rel=1e-6)
+
+    def test_flash_thinking_tokens_priced_higher_than_output(self):
+        cost_output  = self._cost("gemini-2.5-flash", 0, 0, 0, 1_000_000)
+        cost_thinking = self._cost("gemini-2.5-flash", 0, 0, 1_000_000, 0)
+        # Flash thinking = $3.50/M vs output = $0.60/M
+        assert cost_thinking > cost_output * 5
+
+    def test_pro_input_price(self):
+        cost = self._cost("gemini-2.5-pro", 1_000_000, 0, 0, 0)
+        assert cost == pytest.approx(1.25, rel=1e-4)
+
+    def test_unknown_gemini_model_uses_flash_fallback(self):
+        cost = self._cost("gemini-future-model", 1_000_000, 0, 0, 0)
+        assert cost == pytest.approx(0.15, rel=1e-4)
+
+    def test_parse_gemini_csv_returns_warning(self):
+        from src.parsers.gemini import parse_gemini_csv
+        bill = parse_gemini_csv(b"date,model,cost\n2026-06-01,gemini-2.5-pro,1.0\n")
+        assert bill.provider.value == "gemini"
+        assert len(bill.entries) == 0
+        assert any("not yet" in w for w in bill.parse_warnings)

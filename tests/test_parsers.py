@@ -163,6 +163,101 @@ class TestAnthropicParserEdgeCases:
         assert bill.entries[0].feature == "my-project"
 
 
+class TestAnthropicCachePricing:
+    """Cache read/write tokens carry different rates than regular input."""
+
+    def _estimate(self, input_tok, cache_read, cache_write, output_tok, model="claude-opus-4"):
+        from src.parsers.anthropic import _estimate_anthropic_cost
+        return _estimate_anthropic_cost(model, input_tok, cache_read, cache_write, output_tok)
+
+    def test_cache_read_cheaper_than_regular_input(self):
+        # 1M cache-read tokens vs 1M regular input tokens — same model, same output
+        cost_regular = self._estimate(1_000_000, 0, 0, 0)
+        cost_cached  = self._estimate(0, 1_000_000, 0, 0)
+        # cache reads are 10% of input price → should be ~10x cheaper
+        assert cost_cached == pytest.approx(cost_regular * 0.10, rel=1e-6)
+
+    def test_cache_write_more_expensive_than_regular_input(self):
+        cost_regular = self._estimate(1_000_000, 0, 0, 0)
+        cost_write   = self._estimate(0, 0, 1_000_000, 0)
+        # cache writes are 125% of input price
+        assert cost_write == pytest.approx(cost_regular * 1.25, rel=1e-6)
+
+    def test_mixed_cache_and_input_additive(self):
+        # Verify the total is the sum of each component priced separately
+        combined = self._estimate(1000, 500, 200, 300)
+        # opus-4: in=$15/M, out=$75/M
+        # 1000 * 15 + 500 * 1.5 + 200 * 18.75 + 300 * 75 = all / 1M
+        expected = (1000 * 15.0 + 500 * 1.5 + 200 * 18.75 + 300 * 75.0) / 1_000_000
+        assert combined == pytest.approx(expected, rel=1e-6)
+
+    def test_cache_read_in_csv_priced_correctly(self):
+        # 0-cost row with only cache reads: estimate must reflect 10% rate
+        data = (
+            b"Date,Model,Input tokens,Output tokens,Cache read tokens,"
+            b"Cache write tokens,Cost (USD)\n"
+            b"2026-06-01,claude-opus-4,0,0,1000000,0,0.0\n"
+        )
+        bill = parse_anthropic_csv(data)
+        # 1M cache reads at $1.50/M = $1.50
+        assert bill.entries[0].cost_usd == pytest.approx(1.50, rel=1e-4)
+
+    def test_cache_write_in_csv_priced_correctly(self):
+        data = (
+            b"Date,Model,Input tokens,Output tokens,Cache read tokens,"
+            b"Cache write tokens,Cost (USD)\n"
+            b"2026-06-01,claude-opus-4,0,0,0,1000000,0.0\n"
+        )
+        bill = parse_anthropic_csv(data)
+        # 1M cache writes at $18.75/M = $18.75
+        assert bill.entries[0].cost_usd == pytest.approx(18.75, rel=1e-4)
+
+
+class TestOpenAICachePricing:
+    """Cached input tokens carry a 50% discount; reasoning tokens are priced as output."""
+
+    def _estimate(self, non_cached, cached, output_tok, reasoning_tok=0, model="gpt-4o"):
+        from src.parsers.openai import _estimate_openai_cost
+        return _estimate_openai_cost(model, non_cached, cached, output_tok, reasoning_tok)
+
+    def test_cached_input_half_price(self):
+        cost_regular = self._estimate(1_000_000, 0, 0)
+        cost_cached  = self._estimate(0, 1_000_000, 0)
+        assert cost_cached == pytest.approx(cost_regular * 0.5, rel=1e-6)
+
+    def test_reasoning_tokens_priced_as_output(self):
+        cost_output    = self._estimate(0, 0, 1_000_000, reasoning_tok=0)
+        cost_reasoning = self._estimate(0, 0, 0, reasoning_tok=1_000_000)
+        assert cost_reasoning == pytest.approx(cost_output, rel=1e-6)
+
+    def test_mixed_cached_and_noncached_additive(self):
+        # gpt-4o: in=$2.5/M, out=$10/M
+        combined = self._estimate(1000, 500, 200, reasoning_tok=100)
+        expected = (1000 * 2.5 + 500 * 1.25 + (200 + 100) * 10.0) / 1_000_000
+        assert combined == pytest.approx(expected, rel=1e-6)
+
+    def test_cached_tokens_discounted_in_csv(self):
+        # CSV with cached_context_tokens_input column and zero cost
+        data = (
+            b"date,snapshot_id,input_tokens,cached_context_tokens_input,"
+            b"generated_tokens,amount\n"
+            b"2026-06-01,gpt-4o,1000000,1000000,0,0.0\n"
+        )
+        bill = parse_openai_csv(data)
+        # All 1M input tokens are cached → $1.25/M = $1.25
+        assert bill.entries[0].cost_usd == pytest.approx(1.25, rel=1e-4)
+
+    def test_noncached_input_full_price_in_csv(self):
+        data = (
+            b"date,snapshot_id,input_tokens,cached_context_tokens_input,"
+            b"generated_tokens,amount\n"
+            b"2026-06-01,gpt-4o,1000000,0,0,0.0\n"
+        )
+        bill = parse_openai_csv(data)
+        # 1M non-cached input → $2.50/M = $2.50
+        assert bill.entries[0].cost_usd == pytest.approx(2.50, rel=1e-4)
+
+
 class TestOpenAIParserEdgeCases:
     def test_bad_utf8_raises_value_error(self):
         with pytest.raises(ValueError, match="UTF-8"):
