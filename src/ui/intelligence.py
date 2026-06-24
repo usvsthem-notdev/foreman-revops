@@ -4,11 +4,11 @@ Spend Intelligence page — FIG. 03 flow: Detect → Propose → Guardrails → 
 from __future__ import annotations
 
 import html as _html
+
 import pandas as pd
 import streamlit as st
 
-from src.analytics.intelligence import Finding, IntelligenceReport, Proposal, generate_report
-from src.ui.theme import CLAY, SAGE
+from src.analytics.intelligence import Finding, Proposal, generate_report
 
 
 def render(df: pd.DataFrame) -> None:
@@ -79,7 +79,8 @@ def render(df: pd.DataFrame) -> None:
     st.caption("approved policy — class-level routing guidance")
 
     for cls, rec in report.workload_library.items():
-        with st.expander(f"**{cls.upper()}** — {rec[:60]}…" if len(rec) > 60 else f"**{cls.upper()}**"):
+        label = f"**{cls.upper()}** — {rec[:60]}…" if len(rec) > 60 else f"**{cls.upper()}**"
+        with st.expander(label):
             st.write(rec)
 
     # ---- Step 05: Policy Router ----

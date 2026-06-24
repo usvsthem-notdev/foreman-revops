@@ -12,7 +12,7 @@ import pytest
 _TMP = str(Path(tempfile.mktemp(suffix=".db")).resolve())
 os.environ["FOREMAN_DB_PATH"] = _TMP
 
-from src.db import (
+from src.db import (  # noqa: E402, I001
     clear_all_entries,
     delete_budget,
     delete_entry,
@@ -23,7 +23,7 @@ from src.db import (
     insert_entry,
     upsert_budget,
 )
-from src.models import Budget, BudgetPeriod, EntrySource, Provider, SpendEntry, WorkloadClass
+from src.models import Budget, BudgetPeriod, EntrySource, Provider, SpendEntry, WorkloadClass  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

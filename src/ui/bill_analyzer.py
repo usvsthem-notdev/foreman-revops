@@ -3,18 +3,15 @@ Bill Analyzer page — upload Anthropic / OpenAI billing CSVs.
 """
 from __future__ import annotations
 
-import io
 import logging
 
 import pandas as pd
 import streamlit as st
 
 from src.db import insert_entries_bulk
-from src.models import Provider
 from src.parsers.anthropic import parse_anthropic_csv
 from src.parsers.generic import parse_auto
 from src.parsers.openai import parse_openai_csv
-from src.ui.theme import CLAY, SAGE, SAND
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +38,7 @@ def render() -> None:
         uploaded = st.file_uploader(
             "Billing CSV",
             type=["csv", "txt"],
-            help=f"Max {_MAX_SIZE_MB} MB. Must be a CSV export from your provider's billing console.",
+            help=f"Max {_MAX_SIZE_MB} MB. CSV export from your provider's billing console.",
             accept_multiple_files=False,
         )
 
@@ -61,7 +58,7 @@ def render() -> None:
     try:
         data.decode("utf-8-sig")
     except UnicodeDecodeError:
-        st.error("File does not appear to be a valid UTF-8 CSV. Please export as CSV and try again.")
+        st.error("File is not valid UTF-8. Please export as CSV and try again.")
         return
 
     with st.spinner("Parsing…"):
@@ -97,9 +94,12 @@ def render() -> None:
 
     # ---- Absorbable spend estimate ----
     if bill.entries:
-        absorbable_entries = [e for e in bill.entries if e.workload_class.value in ("extract", "rag")]
+        absorbable_entries = [
+            e for e in bill.entries if e.workload_class.value in ("extract", "rag")
+        ]
         absorbable_cost = sum(e.cost_usd for e in absorbable_entries)
-        absorbable_pct = absorbable_cost / summary["total_cost_usd"] if summary["total_cost_usd"] > 0 else 0
+        total_cost = summary["total_cost_usd"]
+        absorbable_pct = absorbable_cost / total_cost if total_cost > 0 else 0
         if absorbable_cost > 0:
             st.info(
                 f"**Estimated absorbable spend:** ${absorbable_cost:,.2f} "
@@ -152,7 +152,8 @@ def _render_format_guide() -> None:
 **Anthropic Console**
 1. Go to [console.anthropic.com](https://console.anthropic.com) → **Billing** → **Usage**
 2. Select date range → **Export CSV**
-3. Columns: Date, Organization, Project, Model, Input tokens, Output tokens, Cache read tokens, Cache write tokens, Cost (USD)
+3. Columns: Date, Organization, Project, Model, Input tokens, Output tokens,\
+ Cache read tokens, Cache write tokens, Cost (USD)
 
 ---
 

@@ -3,9 +3,7 @@ Burn Map analytics — aggregation and series generation for charts.
 """
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Optional
 
 import pandas as pd
 
@@ -14,10 +12,10 @@ from src.db import fetch_entries
 
 def load_dataframe(
     *,
-    provider: Optional[str] = None,
-    team: Optional[str] = None,
-    since: Optional[datetime] = None,
-    until: Optional[datetime] = None,
+    provider: str | None = None,
+    team: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
 ) -> pd.DataFrame:
     rows = fetch_entries(provider=provider, team=team, since=since, until=until)
     if not rows:
@@ -27,7 +25,9 @@ def load_dataframe(
     df["cost_usd"] = pd.to_numeric(df["cost_usd"], errors="coerce").fillna(0)
     df["input_tokens"] = pd.to_numeric(df["input_tokens"], errors="coerce").fillna(0).astype(int)
     df["output_tokens"] = pd.to_numeric(df["output_tokens"], errors="coerce").fillna(0).astype(int)
-    df["reasoning_tokens"] = pd.to_numeric(df["reasoning_tokens"], errors="coerce").fillna(0).astype(int)
+    df["reasoning_tokens"] = (
+        pd.to_numeric(df["reasoning_tokens"], errors="coerce").fillna(0).astype(int)
+    )
     df["is_local"] = df["is_local"].astype(bool)
     return df
 

@@ -5,16 +5,15 @@ user input), so there is no SQL injection surface.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Generator, Optional
 
-from src.models import Budget, BudgetPeriod, EntrySource, Provider, SpendEntry, WorkloadClass
+from src.models import Budget, SpendEntry
 
 log = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ def get_db_path() -> Path:
         allowed = [
             Path.home().resolve(),
             Path(tempfile.gettempdir()).resolve(),
-            Path("/tmp").resolve(),
+            Path("/tmp").resolve(),  # noqa: S108
         ]
         if not any(p == a or p.is_relative_to(a) for a in allowed):
             raise ValueError(f"FOREMAN_DB_PATH must be inside home or temp dir, got: {p}")
@@ -162,10 +161,10 @@ def insert_entries_bulk(entries: list[SpendEntry]) -> int:
 
 def fetch_entries(
     *,
-    provider: Optional[str] = None,
-    team: Optional[str] = None,
-    since: Optional[datetime] = None,
-    until: Optional[datetime] = None,
+    provider: str | None = None,
+    team: str | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
     limit: int = 10_000,
 ) -> list[dict]:
     clauses = []
@@ -187,7 +186,7 @@ def fetch_entries(
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     # LIMIT via a bound parameter — keeps every value out of the SQL string.
     params.append(int(limit))
-    sql = f"SELECT * FROM spend_entries {where} ORDER BY timestamp DESC LIMIT ?"
+    sql = f"SELECT * FROM spend_entries {where} ORDER BY timestamp DESC LIMIT ?"  # noqa: S608
 
     with _conn() as con:
         rows = con.execute(sql, params).fetchall()
@@ -210,7 +209,8 @@ def clear_all_entries() -> None:
 
 def upsert_budget(budget: Budget) -> None:
     sql = """
-        INSERT INTO budgets (id, name, amount_usd, period, provider, team, alert_threshold, created_at)
+        INSERT INTO budgets
+            (id, name, amount_usd, period, provider, team, alert_threshold, created_at)
         VALUES (?,?,?,?,?,?,?,?)
         ON CONFLICT(name) DO UPDATE SET
             amount_usd=excluded.amount_usd,

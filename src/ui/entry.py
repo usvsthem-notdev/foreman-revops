@@ -62,7 +62,9 @@ def _render_single_form() -> None:
             st.error("Provide either a cost or token counts.")
             return
 
-        inferred_class = WorkloadClass(workload) if workload != "unknown" else infer_workload_class(model)
+        inferred_class = (
+            WorkloadClass(workload) if workload != "unknown" else infer_workload_class(model)
+        )
         inferred_local = is_local or infer_is_local(model)
 
         entry = SpendEntry(
@@ -97,7 +99,7 @@ def _render_recent_table() -> None:
     display = df[["timestamp","provider","model","workload_class","cost_usd",
                   "input_tokens","output_tokens","reasoning_tokens","is_local","team","feature"]].copy()
     display["cost_usd"] = display["cost_usd"].map("${:.6f}".format)
-    display["is_local"] = display["is_local"].map({1: "✓", 0: "", True: "✓", False: ""})
+    display["is_local"] = display["is_local"].map({True: "✓", False: ""})
 
     st.dataframe(display, use_container_width=True, height=400)
 

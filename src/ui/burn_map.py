@@ -13,7 +13,6 @@ from src.analytics.burn_map import (
     burn_by_provider,
     burn_rate_projection,
     cumulative_burn,
-    daily_burn,
     key_metrics,
 )
 from src.ui.theme import CLAY, PLOTLY_COLORS, PLOTLY_LAYOUT, SAGE, SAND, SLATE
@@ -28,7 +27,11 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
     c2.metric(
         "Frontier Spend",
         f"${metrics['frontier_cost_usd']:,.2f}",
-        delta=f"-${metrics['absorbed_cost_usd']:,.2f} absorbed" if metrics["absorbed_cost_usd"] > 0 else None,
+        delta=(
+            f"-${metrics['absorbed_cost_usd']:,.2f} absorbed"
+            if metrics["absorbed_cost_usd"] > 0
+            else None
+        ),
         delta_color="inverse",
     )
     c3.metric("Local Absorbed", f"{metrics['local_pct']:.1f}%")
@@ -42,13 +45,19 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
     if budgets_status:
         st.markdown('<div class="foreman-section">BUDGETS</div>', unsafe_allow_html=True)
         for b in budgets_status:
-            label = f"{b['name']}  ·  {b['period']}  ·  ${b['spent_usd']:,.2f} / ${b['amount_usd']:,.2f}"
+            label = (
+                f"{b['name']}  ·  {b['period']}"
+                f"  ·  ${b['spent_usd']:,.2f} / ${b['amount_usd']:,.2f}"
+            )
             color = "🔴" if b["over_threshold"] else "🟢"
             st.markdown(f"{color} **{label}**")
             st.progress(float(b["pct_used"]))
 
     # ---- Burn by workload class (FIG. 03 main chart) ----
-    st.markdown('<div class="foreman-section">BURN MAP — LIVE SPEND BY CLASS</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="foreman-section">BURN MAP — LIVE SPEND BY CLASS</div>',
+        unsafe_allow_html=True,
+    )
     class_df = burn_by_class(df)
     if not class_df.empty:
         fig = go.Figure()

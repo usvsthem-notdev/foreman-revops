@@ -85,9 +85,18 @@ button[data-baseweb="tab"][aria-selected="true"] {{
 }}
 
 /* ---- finding cards ---- */
-.finding-high   {{ border-left: 3px solid {CLAY};   background: #FDF4F0; padding: 0.75rem 1rem; margin: 0.5rem 0; border-radius: 2px; }}
-.finding-medium {{ border-left: 3px solid #E8B86D;  background: #FDFAF0; padding: 0.75rem 1rem; margin: 0.5rem 0; border-radius: 2px; }}
-.finding-low    {{ border-left: 3px solid {SAGE};   background: #F0FAF3; padding: 0.75rem 1rem; margin: 0.5rem 0; border-radius: 2px; }}
+.finding-high {{
+    border-left:3px solid {CLAY}; background:#FDF4F0;
+    padding:.75rem 1rem; margin:.5rem 0; border-radius:2px;
+}}
+.finding-medium {{
+    border-left:3px solid #E8B86D; background:#FDFAF0;
+    padding:.75rem 1rem; margin:.5rem 0; border-radius:2px;
+}}
+.finding-low {{
+    border-left:3px solid {SAGE}; background:#F0FAF3;
+    padding:.75rem 1rem; margin:.5rem 0; border-radius:2px;
+}}
 
 /* ---- pill badges ---- */
 .pill-sage {{ background: {SAGE}22; color: {SAGE}; border: 1px solid {SAGE}55;

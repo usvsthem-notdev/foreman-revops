@@ -7,7 +7,6 @@ Based on FIG. 03 of the Foreman design:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import pandas as pd
 
@@ -30,12 +29,23 @@ _CHEAPER_ALTERNATIVES: dict[str, tuple[str, float]] = {
 }
 
 _WORKLOAD_RECOMMENDATIONS: dict[str, str] = {
-    "extract":  "claude-haiku or gpt-3.5-turbo — extraction is structured and rarely needs frontier reasoning.",
-    "rag":      "A local embedding model (BGE-large) + haiku-class generation covers most RAG workloads.",
-    "reason":   "Appropriate for frontier models, but consider o1-mini or Sonnet before Opus/o3.",
-    "agents":   "Agent loops compound cost. Enforce per-step budgets and absorb planning steps locally.",
-    "coding":   "claude-sonnet-4 / gpt-4o-mini cover most code tasks. Reserve Opus/o3 for hard proofs.",
-    "unknown":  "Tag these entries with a workload_class to unlock class-specific recommendations.",
+    "extract": (
+        "claude-haiku or gpt-3.5-turbo — extraction is structured"
+        " and rarely needs frontier reasoning."
+    ),
+    "rag": (
+        "A local embedding model (BGE-large) + haiku-class generation covers most RAG workloads."
+    ),
+    "reason":  "Appropriate for frontier models, but consider o1-mini or Sonnet before Opus/o3.",
+    "agents": (
+        "Agent loops compound cost. Enforce per-step budgets and absorb planning steps locally."
+    ),
+    "coding": (
+        "claude-sonnet-4 / gpt-4o-mini cover most code tasks. Reserve Opus/o3 for hard proofs."
+    ),
+    "unknown": (
+        "Tag these entries with a workload_class to unlock class-specific recommendations."
+    ),
 }
 
 
@@ -196,7 +206,6 @@ def propose(df: pd.DataFrame, findings: list[Finding]) -> list[Proposal]:
     if df.empty:
         return proposals
 
-    total = df["cost_usd"].sum()
     by_model = df.groupby("model")["cost_usd"].sum().to_dict()
 
     for model, spend in by_model.items():
@@ -207,8 +216,9 @@ def propose(df: pd.DataFrame, findings: list[Finding]) -> list[Proposal]:
             proposals.append(Proposal(
                 title=f"Route {model} → {alt_name} for eligible tasks",
                 action=(
-                    f"Redirect extract, rag, and simple coding sub-tasks from {model} to {alt_name}. "
-                    f"Estimate: ${saved:,.2f} savings on ${spend:,.2f} spend."
+                    f"Redirect extract, rag, and simple coding sub-tasks"
+                    f" from {model} to {alt_name}."
+                    f" Estimate: ${saved:,.2f} savings on ${spend:,.2f} spend."
                 ),
                 estimated_savings_usd=saved,
                 affected_models=[model],
@@ -225,8 +235,8 @@ def propose(df: pd.DataFrame, findings: list[Finding]) -> list[Proposal]:
             title="Absorb planning steps with a local reasoning model",
             action=(
                 "Deploy R1-Distill-14B or Qwen3-32B locally to handle decomposition and "
-                f"planning steps. Estimated 60–80% of reasoning spend (${reasoning_spend * 0.7:,.2f}) "
-                "is absorbable."
+                f"planning steps. Estimated 60–80% of reasoning spend"
+                f" (${reasoning_spend * 0.7:,.2f}) is absorbable."
             ),
             estimated_savings_usd=reasoning_spend * 0.7,
             affected_models=[m for m in df[df["reasoning_tokens"] > 0]["model"].unique()],
@@ -236,7 +246,7 @@ def propose(df: pd.DataFrame, findings: list[Finding]) -> list[Proposal]:
     return sorted(proposals, key=lambda p: p.estimated_savings_usd, reverse=True)
 
 
-def _find_cheaper_alternative(model: str) -> Optional[tuple[str, float]]:
+def _find_cheaper_alternative(model: str) -> tuple[str, float] | None:
     model_lower = model.lower()
     for prefix, alt in _CHEAPER_ALTERNATIVES.items():
         if prefix in model_lower:

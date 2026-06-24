@@ -11,7 +11,6 @@ import csv
 import io
 import logging
 from datetime import datetime
-from typing import Optional
 
 from src.models import EntrySource, ParsedBill, Provider, SpendEntry
 from src.parsers.base import (
@@ -120,7 +119,7 @@ def _parse_row(
     filename: str,
     line_num: int,
     warnings: list[str],
-) -> Optional[SpendEntry]:
+) -> SpendEntry | None:
     def get(key: str, default: str = "") -> str:
         idx = col.get(key)
         if idx is None or idx >= len(row):
@@ -138,10 +137,6 @@ def _parse_row(
     input_tok = safe_int(get("input_tokens"))
     output_tok = safe_int(get("output_tokens"))
     reasoning_tok = safe_int(get("reasoning_tokens"))
-    # cached_context_tokens_input is a *subset* of input_tokens already counted
-    # in context_tokens_input — do not add again. We store it separately only
-    # for cost estimation (cached tokens are billed at a discounted rate).
-    cached_tok = safe_int(get("cached_tokens"))
     cost_raw = get("cost_usd")
 
     # OpenAI exports cost as negative credits in some formats

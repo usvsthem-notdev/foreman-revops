@@ -14,7 +14,6 @@ import csv
 import io
 import logging
 from datetime import datetime
-from typing import Optional
 
 from src.models import EntrySource, ParsedBill, Provider, SpendEntry
 from src.parsers.base import (
@@ -95,7 +94,10 @@ def parse_anthropic_csv(data: bytes, filename: str = "upload.csv") -> ParsedBill
     if "model" not in col:
         warnings.append("Could not find a 'model' column — rows may not parse correctly.")
     if "cost_usd" not in col and "input_tokens" not in col:
-        warnings.append("No cost or token columns detected. Check that this is an Anthropic billing export.")
+        warnings.append(
+            "No cost or token columns detected."
+            " Check that this is an Anthropic billing export."
+        )
 
     for line_num, row in enumerate(reader, start=2):
         if not any(row):
@@ -126,7 +128,7 @@ def _parse_row(
     filename: str,
     line_num: int,
     warnings: list[str],
-) -> Optional[SpendEntry]:
+) -> SpendEntry | None:
     def get(key: str, default: str = "") -> str:
         idx = col.get(key)
         if idx is None or idx >= len(row):

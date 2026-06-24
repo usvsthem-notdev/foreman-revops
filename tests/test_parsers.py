@@ -1,16 +1,14 @@
 """Tests for billing CSV parsers."""
-import io
-from datetime import datetime
 
 import pytest
 
+from src.models import Provider, WorkloadClass
 from src.parsers.anthropic import parse_anthropic_csv
 from src.parsers.generic import detect_provider, parse_auto
 from src.parsers.openai import parse_openai_csv
-from src.models import Provider, WorkloadClass
 
-
-ANTHROPIC_CSV = b"""Date,Organization,Project,Model,Input tokens,Output tokens,Cache read tokens,Cache write tokens,Cost (USD)
+ANTHROPIC_CSV = b"""Date,Organization,Project,Model,Input tokens,Output tokens,Cache read tokens,Cache write tokens,Cost (USD)"""  # noqa: E501
+ANTHROPIC_CSV += b"""
 2026-06-01,ACME,default,claude-opus-4,10000,2000,500,100,0.18
 2026-06-02,ACME,search,claude-haiku-4-5,5000,800,0,0,0.002
 2026-06-03,ACME,rag,claude-3-5-haiku-20251022,20000,3000,1000,200,0.025
