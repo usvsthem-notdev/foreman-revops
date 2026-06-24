@@ -94,6 +94,13 @@ CREATE TABLE IF NOT EXISTS budgets (
 CREATE INDEX IF NOT EXISTS idx_spend_timestamp ON spend_entries(timestamp);
 CREATE INDEX IF NOT EXISTS idx_spend_provider  ON spend_entries(provider);
 CREATE INDEX IF NOT EXISTS idx_spend_team      ON spend_entries(team);
+
+CREATE TABLE IF NOT EXISTS poll_cursors (
+    provider    TEXT PRIMARY KEY,
+    last_polled TEXT NOT NULL,
+    since_date  TEXT NOT NULL,
+    until_date  TEXT NOT NULL
+);
 """
 
 
@@ -237,3 +244,38 @@ def fetch_budgets() -> list[dict]:
 def delete_budget(budget_id: str) -> None:
     with _conn() as con:
         con.execute("DELETE FROM budgets WHERE id = ?", (budget_id,))
+
+
+# ---------------------------------------------------------------------------
+# Poll cursors — track last successful API poll per provider
+# ---------------------------------------------------------------------------
+
+def get_poll_cursor(provider: str) -> dict | None:
+    with _conn() as con:
+        row = con.execute(
+            "SELECT * FROM poll_cursors WHERE provider = ?", (provider,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_poll_cursor(
+    provider: str,
+    last_polled: datetime,
+    since_date: datetime,
+    until_date: datetime,
+) -> None:
+    sql = """
+        INSERT INTO poll_cursors (provider, last_polled, since_date, until_date)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(provider) DO UPDATE SET
+            last_polled = excluded.last_polled,
+            since_date  = excluded.since_date,
+            until_date  = excluded.until_date
+    """
+    with _conn() as con:
+        con.execute(sql, (
+            provider,
+            last_polled.isoformat(),
+            since_date.isoformat(),
+            until_date.isoformat(),
+        ))
