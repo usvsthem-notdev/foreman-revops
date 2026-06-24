@@ -84,6 +84,58 @@ FIG. 03 loop: **Detect → Propose → Guardrails → Workload Library → Polic
 
 ---
 
+## Cursor MCP integration
+
+Foreman ships an MCP server (`mcp_server.py`) that exposes spend analytics as
+tools Cursor's AI can call directly — ask questions like
+*"what's my Opus spend this week?"* or *"which team is burning the most?"*
+without leaving the editor.
+
+### Setup
+
+**1. Install dependencies**
+
+```bash
+pip install -r requirements.txt
+```
+
+**2. Add to your Cursor MCP config**
+
+Open Cursor → Settings → MCP (or edit `~/.cursor/mcp.json` directly):
+
+```json
+{
+  "mcpServers": {
+    "foreman": {
+      "command": "/absolute/path/to/foreman-revops/.venv/bin/python",
+      "args": ["/absolute/path/to/foreman-revops/mcp_server.py"],
+      "env": {
+        "FOREMAN_DB_PATH": "/absolute/path/to/foreman-revops/foreman.db"
+      }
+    }
+  }
+}
+```
+
+**3. Restart Cursor** — the Foreman tools will appear in the MCP tool list.
+
+### Available tools
+
+| Tool | What it returns |
+|---|---|
+| `get_key_metrics` | Total cost, frontier vs absorbed split, cost/1K tokens |
+| `get_burn_by_provider` | Spend ranked by provider |
+| `get_burn_by_model` | Top N models by spend |
+| `get_burn_by_class` | Spend by workload class (reason, agents, coding, etc.) |
+| `get_daily_burn` | Day-by-day spend for the past N days |
+| `get_projection` | Projected spend over the next N days |
+| `get_budget_status` | Budget vs actual for all configured budgets |
+| `get_top_spenders` | Top teams or features by spend |
+
+All tools accept an optional `days` parameter to scope the lookback window.
+
+---
+
 ## Quick start
 
 ```bash
