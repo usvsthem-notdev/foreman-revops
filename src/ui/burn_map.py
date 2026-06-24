@@ -15,7 +15,7 @@ from src.analytics.burn_map import (
     cumulative_burn,
     key_metrics,
 )
-from src.ui.theme import CLAY, PLOTLY_COLORS, PLOTLY_LAYOUT, SAGE, SAND, SLATE
+from src.ui.theme import CLAY, PLOTLY_COLORS, PLOTLY_LAYOUT, PLOTLY_YAXIS, SAGE, SLATE
 
 
 def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
@@ -78,8 +78,7 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
             barmode="stack",
             height=320,
             xaxis_title="Workload class",
-            yaxis_title="Cost (USD)",
-            yaxis_tickprefix="$",
+            yaxis=dict(**PLOTLY_YAXIS, title="Cost (USD)", tickprefix="$"),
         )
         st.plotly_chart(fig, use_container_width=True)
         st.caption("**Sage** = absorbed locally  ·  **Clay** = frontier spend")
@@ -115,7 +114,7 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
             **PLOTLY_LAYOUT,
             barmode="stack",
             height=300,
-            yaxis=dict(title="Daily cost (USD)", tickprefix="$", gridcolor=SAND),
+            yaxis=dict(**PLOTLY_YAXIS, title="Daily cost (USD)", tickprefix="$"),
             yaxis2=dict(
                 title="Cumulative (USD)",
                 tickprefix="$",

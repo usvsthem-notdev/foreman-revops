@@ -130,5 +130,8 @@ PLOTLY_LAYOUT = dict(
     margin=dict(l=40, r=20, t=40, b=40),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     xaxis=dict(gridcolor=SAND, linecolor=SAND, zeroline=False),
-    yaxis=dict(gridcolor=SAND, linecolor=SAND, zeroline=False),
 )
+
+# Default y-axis style — merge into per-chart yaxis dicts rather than spreading
+# into update_layout() alongside an explicit yaxis= kwarg (would cause TypeError).
+PLOTLY_YAXIS = dict(gridcolor=SAND, linecolor=SAND, zeroline=False)
