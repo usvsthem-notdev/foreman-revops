@@ -16,7 +16,7 @@ exhausted.  Stops immediately on 401/403 to avoid lockout.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -38,7 +38,7 @@ def _auth(api_key: str) -> tuple[str, str]:
 
 def _ms(d: date) -> int:
     """Convert a date to epoch milliseconds (midnight UTC)."""
-    return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
+    return int(datetime(d.year, d.month, d.day, tzinfo=UTC).timestamp() * 1000)
 
 
 def poll(
