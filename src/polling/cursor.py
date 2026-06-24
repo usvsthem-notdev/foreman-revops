@@ -163,9 +163,10 @@ def _to_entry(event: dict[str, Any]) -> SpendEntry | None:
         return None
 
     usage = event.get("tokenUsage") or {}
-    input_tok  = int(usage.get("inputTokens",      0) or 0)
-    output_tok = int(usage.get("outputTokens",     0) or 0)
-    cache_tok  = int(usage.get("cacheReadTokens",  0) or 0)
+    input_tok   = int(usage.get("inputTokens",      0) or 0)
+    output_tok  = int(usage.get("outputTokens",     0) or 0)
+    cache_read  = int(usage.get("cacheReadTokens",  0) or 0)
+    cache_write = int(usage.get("cacheWriteTokens", 0) or 0)
 
     if input_tok == 0 and output_tok == 0:
         return None
@@ -180,6 +181,9 @@ def _to_entry(event: dict[str, Any]) -> SpendEntry | None:
         cost_usd = float(total_c) / 100
     else:
         cost_usd = 0.0
+
+    if cost_usd == 0.0 and (input_tok + output_tok) > 0:
+        cost_usd = _estimate_cursor_cost(model, input_tok, cache_read, cache_write, output_tok)
 
     ts_raw = event.get("timestamp")
     ts = _parse_ts(ts_raw)
@@ -196,13 +200,64 @@ def _to_entry(event: dict[str, Any]) -> SpendEntry | None:
         workload_class=infer_workload_class(model, feature),
         input_tokens=input_tok,
         output_tokens=output_tok,
-        reasoning_tokens=cache_tok,
+        reasoning_tokens=cache_read + cache_write,
         cost_usd=round(cost_usd, 8),
         is_local=infer_is_local(model),
         team=team,
         feature=feature,
         source=EntrySource.cursor_api,
     )
+
+
+# Approximate pricing for Cursor-routed models ($/M tokens) — June 2026.
+# Cursor passes calls through to the underlying provider at roughly list price.
+_CURSOR_PRICES: dict[str, tuple[float, float]] = {
+    "claude-opus":     (15.0, 75.0),
+    "claude-sonnet":   (3.0,  15.0),
+    "claude-haiku":    (0.25, 1.25),
+    "gpt-4o":          (2.5,  10.0),
+    "gpt-4":           (10.0, 30.0),
+    "gpt-3.5":         (0.5,  1.5),
+    "o3":              (10.0, 40.0),
+    "o1":              (15.0, 60.0),
+    "cursor-small":    (0.004, 0.008),
+}
+
+
+def _estimate_cursor_cost(
+    model: str,
+    input_tok: int,
+    cache_read: int,
+    cache_write: int,
+    output_tok: int,
+) -> float:
+    """
+    Cursor cache token pricing follows the underlying provider (June 2026):
+      - Claude models (Anthropic):  cache read = 10% of input, write = 125% of input
+      - OpenAI models:              cache read = 50% of input, no write surcharge
+      - cursor-small / unknown:     flat input rate (no cache discount data)
+    """
+    model_lower = model.lower()
+    for key, (in_price, out_price) in _CURSOR_PRICES.items():
+        if key not in model_lower:
+            continue
+        if "claude" in model_lower:
+            return (
+                input_tok   * in_price
+                + cache_read  * (in_price * 0.10)
+                + cache_write * (in_price * 1.25)
+                + output_tok  * out_price
+            ) / 1_000_000
+        else:
+            # OpenAI-style: cached input at 50% discount, no extra write charge
+            return (
+                input_tok   * in_price
+                + cache_read  * (in_price * 0.50)
+                + cache_write * in_price
+                + output_tok  * out_price
+            ) / 1_000_000
+    # Unknown model — mid-tier fallback
+    return (input_tok * 2.5 + output_tok * 10.0) / 1_000_000
 
 
 def _parse_ts(raw: Any) -> datetime | None:

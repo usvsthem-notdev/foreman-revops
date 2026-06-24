@@ -135,6 +135,7 @@ def _parse_row(
 
     model = get("model") or get("usage_type") or "openai-unknown"
     input_tok = safe_int(get("input_tokens"))
+    cached_tok = safe_int(get("cached_tokens"))   # subset of input_tok
     output_tok = safe_int(get("output_tokens"))
     reasoning_tok = safe_int(get("reasoning_tokens"))
     cost_raw = get("cost_usd")
@@ -142,8 +143,9 @@ def _parse_row(
     # OpenAI exports cost as negative credits in some formats
     cost = abs(safe_float(cost_raw))
     if cost == 0.0 and (input_tok + output_tok) > 0:
-        # Use input_tok directly; cached_tok is already included in that count.
-        cost = _estimate_openai_cost(model, input_tok, output_tok, reasoning_tok)
+        # cached_tok is a subset of input_tok — price it at 50% discount.
+        non_cached = max(0, input_tok - cached_tok)
+        cost = _estimate_openai_cost(model, non_cached, cached_tok, output_tok, reasoning_tok)
 
     feature = get("project") or None
 
@@ -175,9 +177,30 @@ _OPENAI_PRICES: dict[str, tuple[float, float]] = {
 }
 
 
-def _estimate_openai_cost(model: str, input_tok: int, output_tok: int, reasoning_tok: int) -> float:
+def _estimate_openai_cost(
+    model: str,
+    non_cached_input: int,
+    cached_input: int,
+    output_tok: int,
+    reasoning_tok: int,
+) -> float:
+    """
+    OpenAI token pricing (June 2026):
+      - Regular input:    1.00x in_price
+      - Cached input:     0.50x in_price  (prompt cache hit — 50% discount)
+      - Output:           out_price
+      - Reasoning tokens: out_price  (counted as output, same rate)
+    """
     model_lower = model.lower()
     for key, (in_price, out_price) in _OPENAI_PRICES.items():
         if key in model_lower:
-            return (input_tok * in_price + (output_tok + reasoning_tok) * out_price) / 1_000_000
-    return (input_tok * 2.5 + output_tok * 10.0) / 1_000_000
+            return (
+                non_cached_input * in_price
+                + cached_input    * (in_price * 0.5)
+                + (output_tok + reasoning_tok) * out_price
+            ) / 1_000_000
+    return (
+        non_cached_input * 2.5
+        + cached_input    * 1.25
+        + (output_tok + reasoning_tok) * 10.0
+    ) / 1_000_000

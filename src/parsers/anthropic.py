@@ -149,12 +149,13 @@ def _parse_row(
     cache_write = safe_int(get("cache_write"))
     cost = safe_float(get("cost_usd"))
 
-    # Anthropic cache tokens are a form of "input" — add to input count
+    # Anthropic cache tokens are a form of "input" — add to input count for storage
     effective_input = input_tok + cache_read + cache_write
 
     # Rough cost estimate if missing (current Anthropic list prices, June 2026)
+    # Cache reads are priced at 10% of input; cache writes at 125% of input.
     if cost == 0.0 and (effective_input + output_tok) > 0:
-        cost = _estimate_anthropic_cost(model, effective_input, output_tok)
+        cost = _estimate_anthropic_cost(model, input_tok, cache_read, cache_write, output_tok)
 
     feature = get("project") or None
 
@@ -186,10 +187,33 @@ _ANTHROPIC_PRICES: dict[str, tuple[float, float]] = {
 }
 
 
-def _estimate_anthropic_cost(model: str, input_tok: int, output_tok: int) -> float:
+def _estimate_anthropic_cost(
+    model: str,
+    input_tok: int,
+    cache_read: int,
+    cache_write: int,
+    output_tok: int,
+) -> float:
+    """
+    Anthropic token pricing (June 2026):
+      - Regular input:  1.00x in_price
+      - Cache read:     0.10x in_price  (prompt cache hit — 90% discount)
+      - Cache write:    1.25x in_price  (prompt cache creation — 25% premium)
+      - Output:         out_price
+    """
     model_lower = model.lower()
     for key, (in_price, out_price) in _ANTHROPIC_PRICES.items():
         if key in model_lower:
-            return (input_tok * in_price + output_tok * out_price) / 1_000_000
+            return (
+                input_tok   * in_price
+                + cache_read  * (in_price * 0.10)
+                + cache_write * (in_price * 1.25)
+                + output_tok  * out_price
+            ) / 1_000_000
     # Default fallback — mid-tier price
-    return (input_tok * 3.0 + output_tok * 15.0) / 1_000_000
+    return (
+        input_tok   * 3.0
+        + cache_read  * 0.30
+        + cache_write * 3.75
+        + output_tok  * 15.0
+    ) / 1_000_000

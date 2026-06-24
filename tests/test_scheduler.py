@@ -213,8 +213,9 @@ class TestRunOnce:
         assert polled == []
 
     def test_polls_and_inserts(self, tmp_path, monkeypatch):
-        from src.models import EntrySource, Provider, SpendEntry
         from datetime import datetime as dt
+
+        from src.models import EntrySource, Provider, SpendEntry
         monkeypatch.setenv("FOREMAN_DB_PATH", str(tmp_path / "foreman.db"))
         fake_entry = SpendEntry(
             timestamp=dt(2026, 6, 1),

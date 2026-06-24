@@ -20,7 +20,6 @@ from src.analytics.burn_map import (
     load_dataframe,
 )
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _row(
