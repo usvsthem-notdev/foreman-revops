@@ -32,10 +32,11 @@ def get_db_path() -> Path:
         allowed = [
             Path.home().resolve(),
             Path(tempfile.gettempdir()).resolve(),
-            Path("/tmp").resolve(),  # noqa: S108
+            Path("/tmp").resolve(),   # noqa: S108
+            Path("/app").resolve(),   # Docker working directory
         ]
         if not any(p == a or p.is_relative_to(a) for a in allowed):
-            raise ValueError(f"FOREMAN_DB_PATH must be inside home or temp dir, got: {p}")
+            raise ValueError(f"FOREMAN_DB_PATH must be inside home, temp, or /app dir, got: {p}")
         return p
     return _DEFAULT_DB.resolve()
 
