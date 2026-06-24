@@ -1,0 +1,37 @@
+[project]
+name = "foreman-revops"
+version = "0.1.0"
+description = "Open-source LLM burn map and spend tracker — the FinOps view that does not yet exist for LLM spend."
+authors = [{name = "Connor Drexler"}]
+license = {text = "Apache-2.0"}
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["llm", "finops", "spend", "openai", "anthropic", "revops"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Office/Business :: Financial",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "S", "B", "UP"]
+ignore = [
+    "S101",  # assert in tests
+    "S311",  # pseudo-random is fine for non-crypto
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*"]

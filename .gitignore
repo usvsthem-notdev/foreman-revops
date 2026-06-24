@@ -1,0 +1,47 @@
+# Database
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Environment / secrets
+.env.local
+.env.*.local
+*.env
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Ruff cache
+.ruff_cache/
