@@ -173,23 +173,36 @@ class TestOpenAIParserEdgeCases:
         assert any("empty" in w for w in bill.parse_warnings)
 
     def test_all_empty_row_skipped(self):
-        data = b"date,snapshot_id,input_tokens,generated_tokens,amount\n,,,,\n2026-06-01,gpt-4o,1000,200,0.05\n"
+        data = (
+            b"date,snapshot_id,input_tokens,generated_tokens,amount\n"
+            b",,,,\n"
+            b"2026-06-01,gpt-4o,1000,200,0.05\n"
+        )
         bill = parse_openai_csv(data)
         assert len(bill.entries) == 1
 
     def test_unparseable_date_uses_now_and_warns(self):
-        data = b"date,snapshot_id,input_tokens,generated_tokens,amount\nnot-a-date,gpt-4o,1000,200,0.05\n"
+        data = (
+            b"date,snapshot_id,input_tokens,generated_tokens,amount\n"
+            b"not-a-date,gpt-4o,1000,200,0.05\n"
+        )
         bill = parse_openai_csv(data)
         assert len(bill.entries) == 1
         assert any("could not parse date" in w for w in bill.parse_warnings)
 
     def test_zero_cost_triggers_estimation(self):
-        data = b"date,snapshot_id,input_tokens,generated_tokens,amount\n2026-06-01,gpt-4o,10000,2000,0.0\n"
+        data = (
+            b"date,snapshot_id,input_tokens,generated_tokens,amount\n"
+            b"2026-06-01,gpt-4o,10000,2000,0.0\n"
+        )
         bill = parse_openai_csv(data)
         assert bill.entries[0].cost_usd > 0.0
 
     def test_negative_cost_made_positive(self):
-        data = b"date,snapshot_id,input_tokens,generated_tokens,amount\n2026-06-01,gpt-4o,0,0,-1.50\n"
+        data = (
+            b"date,snapshot_id,input_tokens,generated_tokens,amount\n"
+            b"2026-06-01,gpt-4o,0,0,-1.50\n"
+        )
         bill = parse_openai_csv(data)
         assert bill.entries[0].cost_usd == pytest.approx(1.50)
 
