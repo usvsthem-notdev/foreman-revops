@@ -3,9 +3,8 @@ title: Foreman RevOps Tracker
 emoji: 🔥
 colorFrom: gray
 colorTo: orange
-sdk: streamlit
-sdk_version: 1.45.1
-app_file: app.py
+sdk: docker
+app_port: 7860
 pinned: false
 license: apache-2.0
 short_description: Open-source LLM burn map and spend tracker

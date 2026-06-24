@@ -28,9 +28,9 @@ services:
   app:
     <<: *common
     ports:
-      - "8501:8501"
+      - "8501:7860"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:7860/_stcore/health"]
       interval: 30s
       timeout: 10s
       start_period: 10s
