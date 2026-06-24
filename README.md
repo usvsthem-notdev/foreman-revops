@@ -20,7 +20,18 @@ An open-source burn map and spend tracker for LLM API costs — built as the fre
 Bill Analyzer described in the [Foreman](https://github.com/usvsthem-notdev/foreman-revops)
 architecture.
 
-All data stays on your machine. No telemetry. No external calls.
+All data stays on your machine. No telemetry.
+
+---
+
+## Supported providers
+
+| Provider | Live polling | CSV import | Notes |
+|---|---|---|---|
+| **Anthropic** | Yes — usage API | Yes | Cache read/write tokens priced separately |
+| **OpenAI** | Yes — usage API | Yes | Cached input and reasoning tokens priced separately |
+| **Cursor** | Yes — team admin API | — | Requires Team/Business plan + admin key (`crsr_…`) |
+| **Gemini** | — | BigQuery export | No usage REST API for AI Studio keys; import via Bill Analyzer |
 
 ---
 
@@ -36,12 +47,27 @@ Foreman architecture.
 - 30-day spend projection
 - Budget progress tracking with configurable alert thresholds
 
+### Live API Polling
+Auto-fetch usage data directly from provider APIs on a configurable schedule.
+
+- **Anthropic**: pulls from the Anthropic usage API with date-range pagination
+- **OpenAI**: polls the per-day usage endpoint across the lookback window
+- **Cursor**: fetches per-event usage from the Cursor team admin API (`POST /teams/filtered-usage-events`)
+- **Gemini**: key stored for future integrations; historical data via BigQuery CSV export
+- Configurable poll interval (minimum 1 hour) and lookback window (capped at 7 days)
+- Poll cursors stored locally — no duplicate inserts on re-poll
+- Keys stored in `.env.local` (never committed); encrypted at rest via OS keychain when available
+
 ### Bill Analyzer
-Upload billing CSVs from Anthropic or OpenAI — parsed entirely in-process.
+Upload billing CSVs — parsed entirely in-process, no data leaves your machine.
 
 - Auto-detects provider from file headers
-- Handles multiple export formats per provider
-- Estimates "absorbable spend" — workloads that could run on a local model
+- Handles multiple export formats per provider (Anthropic Console, OpenAI activity + invoice exports)
+- Estimates missing cost values using per-provider pricing tables with differential token rates:
+  - Anthropic: cache reads at 10% of input price, cache writes at 125%
+  - OpenAI: cached input at 50% discount; reasoning tokens at output rate
+  - Cursor: Claude-routed calls use Anthropic cache rates; GPT-routed calls use OpenAI rates
+  - Gemini: context cache reads at ~25% of input; thinking tokens at a higher output rate
 - One-click import to Burn Map
 
 ### Spend Intelligence
@@ -84,15 +110,32 @@ between restarts. For persistent storage, run locally or with Docker.
 
 ---
 
+## Configuration
+
+Environment variables (or `.env.local` in the project root):
+
+| Variable | Default | Description |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (`sk-ant-api03-…`) |
+| `OPENAI_API_KEY` | — | OpenAI API key (`sk-…`) |
+| `CURSOR_API_KEY` | — | Cursor admin key (`crsr_…`); requires Team/Business plan |
+| `GEMINI_API_KEY` | — | Gemini AI Studio key (stored for future use; polling not available) |
+| `FOREMAN_POLL_PROVIDERS` | `anthropic,openai` | Comma-separated list of providers to poll |
+| `FOREMAN_POLL_INTERVAL_HOURS` | `6` | Hours between polls (minimum 1) |
+| `FOREMAN_POLL_LOOKBACK_DAYS` | `2` | Days of history to fetch per poll (maximum 7) |
+| `FOREMAN_DB_PATH` | `~/.foreman/foreman.db` | SQLite database path |
+
+---
+
 ## Workload classes
 
 | Class | Models typically used | Absorbable? |
 |-------|-----------------------|-------------|
-| `extract` | haiku, gpt-3.5 | High — structured output, local models match quality |
+| `extract` | haiku, gpt-3.5, gemini-flash | High — structured output, local models match quality |
 | `rag` | haiku + embeddings | High — local embedding + small generator works well |
-| `reason` | opus, o1, o3 | Partial — planning steps absorbable, final synthesis often needs frontier |
+| `reason` | opus, o1, o3, gemini-pro | Partial — planning steps absorbable, final synthesis often needs frontier |
 | `agents` | sonnet, gpt-4o | Partial — sub-task planning absorbable locally |
-| `coding` | sonnet, gpt-4o | Partial — most code tasks, reserve frontier for hard proofs |
+| `coding` | sonnet, gpt-4o, cursor-small | Partial — most code tasks, reserve frontier for hard proofs |
 
 **Sage** = absorbed locally · **Clay** = frontier spend
 
@@ -103,8 +146,9 @@ between restarts. For persistent storage, run locally or with Docker.
 - All SQL uses parameterized queries (no SQL injection surface)
 - File uploads: 50 MB limit, UTF-8 validation, no disk writes
 - `FOREMAN_DB_PATH` validated to home dir or `/tmp` (no path traversal)
+- Live polling uses an SSRF allowlist — only `api.anthropic.com`, `api.openai.com`, and `api.cursor.com` are reachable; redirects disabled
+- API keys validated by format before any network request is made; keys appear only as masked strings in logs
 - Docker: non-root user, `no-new-privileges`, read-only root FS
-- No outbound network calls from the app
 
 See [SECURITY.md](.github/SECURITY.md) for the full policy and how to report vulnerabilities.
 
@@ -118,17 +162,20 @@ Columns: Date, Organization, Project, Model, Input tokens, Output tokens, Cache 
 
 ### OpenAI Platform
 `Usage → Export` or `Billing → Download CSV`  
-Multiple formats supported — the parser handles column name variations.
+Multiple formats supported — the parser handles column name variations across activity and invoice exports.
+
+### Gemini / Google Cloud
+`console.cloud.google.com → Billing → BigQuery export` → download CSV for the desired date range.  
+The generic parser handles common BigQuery billing column layouts.
 
 ---
 
 ## Roadmap
 
-- [ ] Live API polling (Anthropic / OpenAI usage APIs)
 - [ ] Slack / email budget alerts
 - [ ] Team-level dashboards with RBAC
 - [ ] Golden eval harness for routing policy backtesting
-- [ ] Google Cloud / Vertex billing support
+- [ ] Full Gemini BigQuery CSV parser
 - [ ] PostgreSQL backend for multi-user deployments
 
 ---
