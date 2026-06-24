@@ -2,7 +2,7 @@
 title: Foreman RevOps Tracker
 emoji: 🔥
 colorFrom: gray
-colorTo: orange
+colorTo: red
 sdk: docker
 app_port: 7860
 pinned: false
