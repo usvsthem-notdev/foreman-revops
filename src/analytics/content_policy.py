@@ -1,7 +1,10 @@
 """
 Content policy for user-supplied and externally-sourced strings.
 
-Inspired by the markspace ContentPolicy pattern (ALLOW / REWRITE / REJECT / FLAG).
+The ALLOW / REWRITE / REJECT / FLAG verdict pattern is borrowed directly from
+opinionated-systems/markspace (https://github.com/opinionated-systems/markspace).
+Credit to the markspace contributors for the ContentPolicy abstraction.
+
 Applied at the model-validation boundary so injection payloads never reach storage or
 an LLM context regardless of which ingestion path brought them in.
 

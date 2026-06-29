@@ -15,9 +15,7 @@ file on your machine. No telemetry, no external API calls, no user accounts.
 
 Please **do not** open a public GitHub issue for security vulnerabilities.
 
-Email: founders@[your-domain].com  
-Subject: `[SECURITY] foreman-revops — <brief description>`
-
+Open a [private security advisory](https://github.com/usvsthem-notdev/foreman-revops/security/advisories/new) on GitHub.  
 We will acknowledge within 48 hours and aim to ship a patch within 14 days.
 
 ## Security design notes
@@ -34,8 +32,11 @@ We will acknowledge within 48 hours and aim to ship a patch within 14 days.
   the system temp dir, and `/tmp`. Symlinks are resolved before comparison.
 - **XSS**: user-sourced strings (e.g. model names from uploaded CSVs) are escaped
   with `html.escape()` before being embedded in any `unsafe_allow_html` block.
-- **No outbound network calls**: the app does not call any external API. The
-  billing CSVs are parsed entirely in-process.
+- **Outbound network calls**: the Streamlit UI itself makes no outbound calls.
+  The optional polling scheduler (`src/polling/scheduler.py`) calls provider
+  APIs (Anthropic, OpenAI, Cursor) over HTTPS using your own keys. Keys are
+  stored in `.env.local` at mode 0o600 and never written to the database.
+  Billing CSVs are parsed entirely in-process.
 - **Docker**: the container runs as a non-root user (`foreman`). The security
   flags `no-new-privileges` and `read_only: true` are enforced in
   `docker-compose.yml`. Users running the image directly with `docker run`

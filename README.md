@@ -155,6 +155,12 @@ See [SECURITY.md](.github/SECURITY.md) for the full policy.
 
 ---
 
+## Acknowledgements
+
+The content policy in `src/analytics/content_policy.py` (ALLOW / REWRITE / REJECT / FLAG verdict pattern) is adapted from [opinionated-systems/markspace](https://github.com/opinionated-systems/markspace). Credit to the markspace contributors for the ContentPolicy abstraction.
+
+---
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).
