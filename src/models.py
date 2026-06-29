@@ -84,7 +84,8 @@ class SpendEntry(BaseModel):
     def strip_strings(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        return str(v).strip()
+        from src.analytics.content_policy import sanitize
+        return sanitize(str(v).strip(), field=cls.__name__)
 
     @model_validator(mode="after")
     def total_tokens_positive(self) -> SpendEntry:

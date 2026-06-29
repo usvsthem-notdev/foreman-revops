@@ -55,47 +55,53 @@ def render(df: pd.DataFrame) -> None:
 
 def _render_coverage(df: pd.DataFrame) -> None:
     st.markdown('<div class="foreman-section">01 · COVERAGE</div>', unsafe_allow_html=True)
-    st.caption("How many entries have been through the classifier and how many still need review.")
+    st.caption("How many entries have been categorized and how many still need review.")
 
-    total       = len(df)
-    classified  = int(df["tag_confidence"].notna().sum())
-    unclassified = total - classified
+    total        = len(df)
+    classified   = int(df["tag_confidence"].notna().sum())
     needs_review = int(df["tag_needs_review"].sum()) if "tag_needs_review" in df.columns else 0
-    confirmed   = classified - needs_review
+    high_conf    = classified - needs_review
+
+    # DB is authoritative for unclassified count (avoids NaN mismatch with filtered df)
+    unclassified_db = fetch_unclassified(limit=1)
+    has_unclassified = bool(unclassified_db)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total entries",   f"{total:,}")
-    c2.metric("Classified",      f"{classified:,}",
+    c1.metric("Total entries",    f"{total:,}")
+    c2.metric("Categorized",      f"{classified:,}",
               delta=f"{classified / total:.0%} of total" if total else None,
               delta_color="off")
-    c3.metric("Confirmed",       f"{confirmed:,}",
-              help="Classified with confidence ≥ threshold, or manually confirmed.")
-    c4.metric("Pending review",  f"{needs_review:,}",
-              help="Confidence below threshold — confirm in Spend Intelligence.")
+    c3.metric("High-confidence",  f"{high_conf:,}",
+              help=f"Categorized with confidence ≥ {REVIEW_THRESHOLD:.0%}.")
+    c4.metric("Needs review",     f"{needs_review:,}",
+              help="Lower-confidence categories — confirm in Spend Intelligence before treating as final.")
 
     st.divider()
 
     col_btn, col_note = st.columns([1, 3])
     with col_btn:
-        unclassified_db = fetch_unclassified(limit=1)
-        if unclassified_db:
-            if st.button("Run classifier", type="primary", key="clf_run_btn"):
-                with st.spinner("Classifying…"):
+        if has_unclassified:
+            if st.button("Run categorizer", type="primary", key="clf_run_btn"):
+                with st.spinner("Categorizing…"):
                     n = classify_pending(limit=50_000)
-                st.success(f"Classified {n:,} entries. Reload the page to see updated counts.")
+                st.session_state["clf_last_run_count"] = n
                 st.rerun()
         else:
-            st.button("Run classifier", disabled=True, key="clf_run_btn_disabled",
-                      help="All entries have already been classified.")
+            st.button("Run categorizer", disabled=True, key="clf_run_btn_disabled",
+                      help="All entries have already been categorized.")
+
+    if "clf_last_run_count" in st.session_state:
+        n = st.session_state.pop("clf_last_run_count")
+        st.success(f"Categorized {n:,} entries.")
 
     with col_note:
         st.caption(
-            f"Assigns **ai_category** from provider + workload class using the rule table below.  \n"
-            f"Entries with confidence < **{REVIEW_THRESHOLD:.0%}** are flagged for review "
-            f"and never silently committed as ground truth."
+            f"Each entry is assigned a spend category based on the provider and how the tool was used.  \n"
+            f"Entries with confidence below **{REVIEW_THRESHOLD:.0%}** are flagged for human review "
+            f"before the category is treated as final."
         )
-        if unclassified > 0:
-            st.warning(f"{unclassified:,} entries have not been classified yet — click **Run classifier**.")
+        if has_unclassified:
+            st.warning("Some entries have not been categorized yet — click **Run categorizer**.")
 
 
 # ---------------------------------------------------------------------------
@@ -167,43 +173,53 @@ def _render_breakdown(df: pd.DataFrame) -> None:
     # ── Entry explorer ──
     st.caption("Entries by category")
 
-    cat_options = ["All"] + [
-        AI_CAT_LABELS.get(c, c)
-        for c in df["ai_category"].unique()
-        if c in AI_CAT_LABELS
-    ]
+    # Include all category values in the filter, even if unmapped in AI_CAT_LABELS
+    all_cats = sorted(df["ai_category"].dropna().unique().tolist())
+    cat_options = ["All"] + [AI_CAT_LABELS.get(c, c) for c in all_cats]
+    # Map display label → raw key (covers both known and unknown category values)
+    label_to_key: dict[str, str] = {AI_CAT_LABELS.get(c, c): c for c in all_cats}
+
     chosen_label = st.selectbox("Filter by category", cat_options,
                                 key="clf_cat_filter", label_visibility="collapsed")
-    chosen_key   = next(
-        (k for k, v in AI_CAT_LABELS.items() if v == chosen_label),
-        None,
-    )
+    chosen_key   = label_to_key.get(chosen_label)  # None when "All" selected
 
     filtered = df if chosen_key is None else df[df["ai_category"] == chosen_key]
 
+    # Pre-flight: only keep columns that are actually present to avoid KeyError on older DBs
+    _WANTED = ["timestamp", "provider", "model", "workload_class",
+               "ai_category", "tag_confidence", "tag_needs_review", "cost_usd", "team"]
+    _COLS   = [c for c in _WANTED if c in filtered.columns]
+
     display = (
-        filtered[["timestamp", "provider", "model", "workload_class",
-                  "ai_category", "tag_confidence", "tag_needs_review",
-                  "cost_usd", "team"]]
+        filtered[_COLS]
         .copy()
         .sort_values("timestamp", ascending=False)
         .head(500)
     )
-    display["ai_category"]    = display["ai_category"].map(lambda x: AI_CAT_LABELS.get(x, x))
-    display["workload_class"] = display["workload_class"].map(lambda x: WC_LABELS.get(x, x))
-    display["tag_confidence"] = display["tag_confidence"].map(
-        lambda v: f"{v:.0%}" if pd.notna(v) else "—"
-    )
-    display["tag_needs_review"] = display["tag_needs_review"].map(
-        {True: "⚠ review", False: "✓", 1: "⚠ review", 0: "✓"}
-    ).fillna("—")
-    display["cost_usd"] = display["cost_usd"].map("${:.4f}".format)
-    display["timestamp"] = pd.to_datetime(display["timestamp"]).dt.date
+    if "ai_category" in display.columns:
+        display["ai_category"]    = display["ai_category"].map(lambda x: AI_CAT_LABELS.get(x, x))
+    if "workload_class" in display.columns:
+        display["workload_class"] = display["workload_class"].map(lambda x: WC_LABELS.get(x, x))
+    if "tag_confidence" in display.columns:
+        display["tag_confidence"] = display["tag_confidence"].map(
+            lambda v: f"{v:.0%}" if pd.notna(v) else "—"
+        )
+    if "tag_needs_review" in display.columns:
+        display["tag_needs_review"] = display["tag_needs_review"].map(
+            {True: "⚠ review", False: "✓", 1: "⚠ review", 0: "✓"}
+        ).fillna("—")
+    if "cost_usd" in display.columns:
+        display["cost_usd"] = display["cost_usd"].map("${:.4f}".format)
+    if "timestamp" in display.columns:
+        display["timestamp"] = pd.to_datetime(display["timestamp"]).dt.date
 
-    display.columns = [
-        "Date", "Provider", "Model", "Workload",
-        "AI Category", "Confidence", "Status", "Cost", "Team"
-    ]
+    _RENAME = {
+        "timestamp": "Date", "provider": "Provider", "model": "Model",
+        "workload_class": "Workload", "ai_category": "Category",
+        "tag_confidence": "Confidence", "tag_needs_review": "Status",
+        "cost_usd": "Cost", "team": "Team",
+    }
+    display.rename(columns=_RENAME, inplace=True)
     st.dataframe(display, use_container_width=True, height=320, hide_index=True)
     if len(filtered) > 500:
         st.caption(f"Showing 500 of {len(filtered):,} entries.")
@@ -216,9 +232,9 @@ def _render_breakdown(df: pd.DataFrame) -> None:
 def _render_rules() -> None:
     st.markdown('<div class="foreman-section">03 · RULES</div>', unsafe_allow_html=True)
     st.caption(
-        "Rules are evaluated top-to-bottom — first match wins. "
+        "Categorization logic runs in priority order — first match wins. "
         f"Entries below **{REVIEW_THRESHOLD:.0%}** confidence are flagged for human review "
-        "before the tag is treated as ground truth."
+        "before the category is treated as final."
     )
 
     rules = get_rules()
@@ -245,6 +261,7 @@ def _render_rules() -> None:
         hide_index=True,
     )
     st.caption(
-        "To add or tune rules, edit `src/analytics/classifier.py` → `_RULES`. "
-        "Re-run the classifier after any change to propagate updates to existing entries."
+        "Categories are assigned automatically based on provider and usage type. "
+        "Entries highlighted in red are below the confidence threshold and require human sign-off "
+        "before the category is treated as final. Contact your admin to adjust categorization rules."
     )

@@ -62,6 +62,7 @@ def classify(
         if wc_match is not None and wc_match != "*" and wc_match != workload_class:
             continue
         return category, confidence
+    log.warning("No rule matched provider=%r workload_class=%r — returning unknown/0.25", provider, workload_class)
     return AICategory.unknown, 0.25
 
 
