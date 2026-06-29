@@ -133,8 +133,8 @@ def _render_breakdown(df: pd.DataFrame) -> None:
             text=cat_cost["cost_usd"].map("${:,.2f}".format),
             textposition="outside",
         ))
-        fig.update_layout(**PLOTLY_LAYOUT, height=220, xaxis_tickprefix="$",
-                          margin=dict(l=130, r=60, t=20, b=20))
+        fig.update_layout(**PLOTLY_LAYOUT, height=220, xaxis_tickprefix="$")
+        fig.update_layout(margin=dict(l=130, r=60, t=20, b=20))
         st.plotly_chart(fig, use_container_width=True)
 
     with col_conf:
@@ -164,8 +164,8 @@ def _render_breakdown(df: pd.DataFrame) -> None:
                 xaxis=dict(tickformat=".0%", range=[0, 1]),
                 yaxis=dict(**PLOTLY_YAXIS, title="Entries"),
                 showlegend=False,
-                margin=dict(l=40, r=20, t=20, b=20),
             )
+            fig2.update_layout(margin=dict(l=40, r=20, t=20, b=20))
             st.plotly_chart(fig2, use_container_width=True)
 
     # ── Entry explorer ──
