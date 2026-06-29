@@ -29,10 +29,10 @@ def render(df: pd.DataFrame, budgets_raw: list[dict]) -> None:
 
     with col_inputs:
         mau = st.number_input("Monthly Active Users (MAU)", min_value=1, value=1000, step=100)
-        mrr = st.number_input("MRR (USD)", min_value=1.0, value=50_000.0, step=1_000.0, format="%.2f")
+        mrr = st.number_input("MRR (USD)", min_value=0.0, value=50_000.0, step=1_000.0, format="%.2f")
         txn = st.number_input(
             "Transactions / month (optional)",
-            min_value=0, value=0, step=1_000,
+            min_value=0, value=0, step=1,
             help="API calls, completions, orders — leave 0 to skip cost-per-transaction.",
         )
 
@@ -42,15 +42,19 @@ def render(df: pd.DataFrame, budgets_raw: list[dict]) -> None:
         if not ue:
             st.warning("Could not compute unit economics — check MAU and MRR inputs.")
         else:
+            if ue.get("short_range"):
+                st.warning("Date range is under 7 days — monthly projections are unreliable.")
+
             r1c1, r1c2, r1c3 = st.columns(3)
-            r1c1.metric("Monthly LLM cost",    f"${ue['monthly_llm_cost_usd']:,.2f}")
-            r1c2.metric("Cost / MAU",           f"${ue['cost_per_mau_usd']:.4f}")
-            r1c3.metric("LLM % of MRR",         f"{ue['llm_pct_of_mrr']:.2f}%")
+            r1c1.metric("Monthly LLM cost",       f"${ue['monthly_llm_cost_usd']:,.2f}")
+            r1c2.metric("Cost / MAU",              f"${ue['cost_per_mau_usd']:.4f}")
+            r1c3.metric("LLM % of MRR",            f"{ue['llm_pct_of_mrr']:.2f}%")
 
             r2c1, r2c2, r2c3 = st.columns(3)
-            r2c1.metric("Gross margin impact",  f"{ue['gross_margin_impact_pct']:.2f}%")
-            r2c2.metric("Frontier spend / mo",  f"${ue['monthly_frontier_usd']:,.2f}")
-            r2c3.metric("Absorbed (local) / mo", f"${ue['monthly_absorbed_usd']:,.2f}")
+            r2c1.metric("Effective gross margin",  f"{ue['effective_gross_margin_pct']:.2f}%",
+                        help="(MRR − monthly LLM cost) / MRR — excludes all other COGS.")
+            r2c2.metric("Frontier spend / mo",     f"${ue['monthly_frontier_usd']:,.2f}")
+            r2c3.metric("Absorbed (local) / mo",   f"${ue['monthly_absorbed_usd']:,.2f}")
 
             if "cost_per_transaction_usd" in ue:
                 st.metric("Cost / transaction", f"${ue['cost_per_transaction_usd']:.6f}")
@@ -76,7 +80,7 @@ def render(df: pd.DataFrame, budgets_raw: list[dict]) -> None:
                 "variance_usd": lambda v: f"${v:,.2f}" if pd.notna(v) else "—",
                 "variance_pct": lambda v: f"{v:.1f}%" if pd.notna(v) else "—",
             })
-            .applymap(_status_colour, subset=["status"])
+            .map(_status_colour, subset=["status"])
         )
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
@@ -85,7 +89,7 @@ def render(df: pd.DataFrame, budgets_raw: list[dict]) -> None:
     st.caption("Double-entry rows mapped to COGS (5xxx) and R&D (6xxx) accounts. "
                "Compatible with NetSuite, QuickBooks, Sage, and Xero.")
 
-    gl_period = st.radio("Aggregation period", ["month", "quarter", "week"], horizontal=True)
+    gl_period = st.radio("Aggregation period", ["month", "quarter", "week"], horizontal=True, key="gl_period_radio")
     gl_df = gl_export_df(df, period=gl_period)
 
     if gl_df.empty:

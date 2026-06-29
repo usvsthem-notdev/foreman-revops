@@ -60,13 +60,15 @@ def unit_economics(
     monthly_usd    = total_usd / months
 
     result = {
-        "monthly_llm_cost_usd":     round(monthly_usd, 2),
-        "cost_per_mau_usd":         round(monthly_usd / mau, 4),
-        "llm_pct_of_mrr":           round(monthly_usd / mrr_usd * 100, 2),
-        "frontier_pct_of_mrr":      round(frontier_usd / months / mrr_usd * 100, 2),
-        "gross_margin_impact_pct":  round(monthly_usd / mrr_usd * 100, 2),
-        "monthly_frontier_usd":     round(frontier_usd / months, 2),
-        "monthly_absorbed_usd":     round((total_usd - frontier_usd) / months, 2),
+        "monthly_llm_cost_usd":        round(monthly_usd, 2),
+        "cost_per_mau_usd":            round(monthly_usd / mau, 4),
+        "llm_pct_of_mrr":              round(monthly_usd / mrr_usd * 100, 2),
+        "frontier_pct_of_mrr":         round(frontier_usd / months / mrr_usd * 100, 2),
+        # Remaining gross margin assuming LLM is the only COGS line shown here.
+        "effective_gross_margin_pct":  round((mrr_usd - monthly_usd) / mrr_usd * 100, 2),
+        "monthly_frontier_usd":        round(frontier_usd / months, 2),
+        "monthly_absorbed_usd":        round((total_usd - frontier_usd) / months, 2),
+        "short_range":                 span_days < 7,
     }
 
     if transactions and transactions > 0:
@@ -116,7 +118,7 @@ def period_summary(
                 team_budgets[team] = float(b["amount_usd"])
 
         def _apply_budget(row):
-            budget = team_budgets.get(row["team"]) or team_budgets.get("all")
+            budget = team_budgets.get(row["team"], team_budgets.get("all"))
             if budget is None:
                 return row
             row["budget_usd"]    = budget
@@ -153,8 +155,16 @@ def gl_export_df(df: pd.DataFrame, period: str = "month") -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
+    _FORMULA_CHARS = ("=", "+", "-", "@")
+
+    def _safe(val: str) -> str:
+        """Prefix values that would execute as spreadsheet formulas."""
+        s = str(val) if val is not None else ""
+        return ("'" + s) if s.startswith(_FORMULA_CHARS) else s
+
     df = df.copy()
     df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["team"] = df["team"].fillna("unassigned").replace("", "unassigned")
 
     freq_map = {"month": "M", "quarter": "Q", "week": "W"}
     freq = freq_map.get(period, "M")
@@ -173,16 +183,17 @@ def gl_export_df(df: pd.DataFrame, period: str = "month") -> pd.DataFrame:
         if amount == 0:
             continue
 
+        dept = team or "unassigned"
         rows.append({
             "period":       period_str,
             "gl_account":   code,
             "account_name": name,
-            "department":   team or "unassigned",
-            "provider":     provider,
-            "workload":     wc,
+            "department":   _safe(dept),
+            "provider":     _safe(provider),
+            "workload":     _safe(wc),
             "debit_usd":    amount,
             "credit_usd":   0.0,
-            "memo":         f"LLM spend — {provider} / {wc} / {team or 'unassigned'}",
+            "memo":         f"LLM spend — {_safe(provider)} / {_safe(wc)} / {_safe(dept)}",
         })
 
     if not rows:
