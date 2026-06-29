@@ -16,7 +16,7 @@ from src.analytics.burn_map import budget_status, load_dataframe
 # Bootstrap DB before any other src imports that might read it
 from src.db import fetch_budgets, init_db
 from src.demo import seed_if_empty
-from src.ui import api_poll, bill_analyzer, burn_map, entry, intelligence, settings
+from src.ui import api_poll, bill_analyzer, burn_map, entry, finance, intelligence, settings
 from src.ui.theme import BONE, CSS
 
 logging.basicConfig(
@@ -140,9 +140,9 @@ budgets_stat = budget_status(df, budgets_raw) if not df.empty else []
 
 TABS = [
     "Burn Map", "Bill Analyzer", "Live API",
-    "Manual Entry", "Spend Intelligence", "Settings",
+    "Manual Entry", "Spend Intelligence", "Finance", "Settings",
 ]
-tab_burn, tab_bill, tab_api, tab_entry, tab_intel, tab_settings = st.tabs(TABS)
+tab_burn, tab_bill, tab_api, tab_entry, tab_intel, tab_finance, tab_settings = st.tabs(TABS)
 
 with tab_burn:
     burn_map.render(df, budgets_stat)
@@ -158,6 +158,9 @@ with tab_entry:
 
 with tab_intel:
     intelligence.render(df)
+
+with tab_finance:
+    finance.render(df, budgets_raw)
 
 with tab_settings:
     settings.render()
