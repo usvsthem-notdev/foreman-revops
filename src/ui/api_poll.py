@@ -22,7 +22,7 @@ from src.polling import anthropic as anthropic_poller
 from src.polling import cursor as cursor_poller
 from src.polling import openai as openai_poller
 from src.polling.base import mask_key, validate_key_format
-from src.polling.key_store import clear_key, get_key, has_key, key_source, set_key  # noqa: F401
+from src.polling.key_store import clear_key, get_key, has_key, key_source, set_key
 from src.polling.scheduler import read_heartbeat
 
 log = logging.getLogger(__name__)
@@ -70,15 +70,21 @@ def render() -> None:
         "Keys are stored locally in .env.local (0o600) — never in the database."
     )
 
-    # Shared-deployment warning — HuggingFace Spaces sets SPACE_ID
+    # HuggingFace Spaces sets SPACE_ID — the filesystem is shared across all
+    # browser sessions, so storing keys in .env.local would expose them to
+    # anyone who visits the URL.  Key entry is disabled; owners should use
+    # HuggingFace Space secrets (Settings → Variables and secrets) which land
+    # in os.environ as private, per-Space environment variables.
     if os.environ.get("SPACE_ID"):
-        st.warning(
-            "**Shared deployment detected.**  \n"
-            "API keys entered here are stored in `.env.local` on the Space's filesystem. "
-            "This Space is accessible to anyone with the URL — do not enter production keys. "
-            "Run Foreman locally or in a private Docker container for secure key storage.",
-            icon="⚠️",
+        st.error(
+            "**Key entry is disabled on shared deployments.**  \n"
+            "Set your API keys as **Space secrets** in the HuggingFace settings "
+            "(Settings → Variables and secrets). Secret values are injected as "
+            "environment variables and are never visible to visitors.",
+            icon="🔒",
         )
+        _render_scheduler_status()
+        return
 
     _render_scheduler_status()
     st.divider()

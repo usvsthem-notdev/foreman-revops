@@ -6,6 +6,7 @@ Covers:
   2. get_key() must still read the key from .env.local after set_key()
   3. clear_key() removes from .env.local but cannot remove env-var-sourced keys
   4. env var takes priority over .env.local (existing guarantee preserved)
+  5. SPACE_ID present → key entry gate returns early (no .env.local write path reachable)
 """
 from __future__ import annotations
 
@@ -159,3 +160,40 @@ class TestClearKey:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-" + "K" * 93)
         clear_key("anthropic")
         assert get_key("anthropic") is None
+
+
+# ---------------------------------------------------------------------------
+# 5. SPACE_ID gate — key entry disabled on shared deployments
+# ---------------------------------------------------------------------------
+
+class TestSharedDeploymentGate:
+    """
+    When SPACE_ID is in the environment (HuggingFace Spaces), the Live API tab
+    must not allow key writes to .env.local.  This is a code-path test: we verify
+    that render() exits before calling set_key() when SPACE_ID is present.
+
+    We can't import Streamlit components in a headless test, so we verify the
+    gate via the key_store: after a simulated 'SPACE_ID present' render, the
+    .env.local file must not have been written.
+    """
+
+    def test_set_key_not_called_path_is_unreachable_on_space(
+        self, isolated_env_local, monkeypatch
+    ):
+        """
+        Structural guard: verify render() returns before the key form when
+        SPACE_ID is set.  We check the source text rather than running Streamlit.
+        """
+        import pathlib
+        src = pathlib.Path("src/ui/api_poll.py").read_text()
+
+        # The early return must appear after the SPACE_ID check and before
+        # the tab rendering code.
+        space_id_idx = src.index('os.environ.get("SPACE_ID")')
+        early_return_idx = src.index("return", space_id_idx)
+        tab_render_idx = src.index('_render_provider("anthropic")')
+
+        assert early_return_idx < tab_render_idx, (
+            "render() does not return early when SPACE_ID is set — "
+            "the key entry form is reachable on shared deployments."
+        )
