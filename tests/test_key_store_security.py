@@ -195,5 +195,22 @@ class TestSharedDeploymentGate:
 
         assert early_return_idx < tab_render_idx, (
             "render() does not return early when SPACE_ID is set — "
-            "the key entry form is reachable on shared deployments."
+            "the key entry form is reachable on the public demo Space."
+        )
+
+    def test_demo_gate_message_not_scheduler_status(self, isolated_env_local):
+        """The demo gate must not render scheduler status or key forms — just the info block."""
+        import pathlib
+        src = pathlib.Path("src/ui/api_poll.py").read_text()
+
+        space_id_idx = src.index('os.environ.get("SPACE_ID")')
+        early_return_idx = src.index("return", space_id_idx)
+        gate_block = src[space_id_idx:early_return_idx]
+
+        assert "_render_scheduler_status" not in gate_block, (
+            "The demo gate renders _render_scheduler_status() before returning — "
+            "this shows confusing 'scheduler not running' UI on the public demo."
+        )
+        assert "set_key" not in gate_block, (
+            "set_key() is reachable inside the demo gate block."
         )

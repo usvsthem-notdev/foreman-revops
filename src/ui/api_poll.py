@@ -70,20 +70,21 @@ def render() -> None:
         "Keys are stored locally in .env.local (0o600) — never in the database."
     )
 
-    # HuggingFace Spaces sets SPACE_ID — the filesystem is shared across all
-    # browser sessions, so storing keys in .env.local would expose them to
-    # anyone who visits the URL.  Key entry is disabled; owners should use
-    # HuggingFace Space secrets (Settings → Variables and secrets) which land
-    # in os.environ as private, per-Space environment variables.
+    # This Space is a public demo — no API keys, no live data, no polling.
     if os.environ.get("SPACE_ID"):
-        st.error(
-            "**Key entry is disabled on shared deployments.**  \n"
-            "Set your API keys as **Space secrets** in the HuggingFace settings "
-            "(Settings → Variables and secrets). Secret values are injected as "
-            "environment variables and are never visible to visitors.",
-            icon="🔒",
+        st.info(
+            "**This is a read-only demo.**  \n"
+            "Live API polling and key storage are not available here. "
+            "The data you see across all tabs is simulated.  \n\n"
+            "To connect your own Anthropic, OpenAI, or Cursor account, "
+            "run Foreman locally:\n"
+            "```\n"
+            "git clone https://github.com/usvsthem-notdev/foreman-revops\n"
+            "cd foreman-revops\n"
+            "pip install -r requirements.txt\n"
+            "streamlit run app.py\n"
+            "```",
         )
-        _render_scheduler_status()
         return
 
     _render_scheduler_status()
