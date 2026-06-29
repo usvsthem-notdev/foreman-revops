@@ -28,6 +28,13 @@ class WorkloadClass(str, Enum):
     unknown = "unknown"
 
 
+class AICategory(str, Enum):
+    code_gen         = "code_gen"
+    research         = "research"
+    document_office  = "document_office"
+    unknown          = "unknown"
+
+
 class BudgetPeriod(str, Enum):
     daily = "daily"
     weekly = "weekly"
@@ -66,8 +73,11 @@ class SpendEntry(BaseModel):
     feature: str | None = Field(default=None, max_length=128)
     notes: str | None = Field(default=None, max_length=512)
     source: EntrySource = EntrySource.manual
+    user_id: str | None = Field(default=None, max_length=256)
+    project: str | None = Field(default=None, max_length=128)
+    ai_category: AICategory = AICategory.unknown
 
-    @field_validator("model", "team", "feature", "notes", mode="before")
+    @field_validator("model", "team", "feature", "notes", "user_id", "project", mode="before")
     @classmethod
     def strip_strings(cls, v: str | None) -> str | None:
         if v is None:

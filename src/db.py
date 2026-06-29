@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-from src.models import Budget, SpendEntry
+from src.models import AICategory, Budget, SpendEntry
 
 log = logging.getLogger(__name__)
 
@@ -78,7 +78,10 @@ CREATE TABLE IF NOT EXISTS spend_entries (
     team            TEXT,
     feature         TEXT,
     notes           TEXT,
-    source          TEXT NOT NULL DEFAULT 'manual'
+    source          TEXT NOT NULL DEFAULT 'manual',
+    user_id         TEXT,
+    project         TEXT,
+    ai_category     TEXT NOT NULL DEFAULT 'unknown'
 );
 
 CREATE TABLE IF NOT EXISTS budgets (
@@ -92,9 +95,12 @@ CREATE TABLE IF NOT EXISTS budgets (
     created_at      TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_spend_timestamp ON spend_entries(timestamp);
-CREATE INDEX IF NOT EXISTS idx_spend_provider  ON spend_entries(provider);
-CREATE INDEX IF NOT EXISTS idx_spend_team      ON spend_entries(team);
+CREATE INDEX IF NOT EXISTS idx_spend_timestamp   ON spend_entries(timestamp);
+CREATE INDEX IF NOT EXISTS idx_spend_provider    ON spend_entries(provider);
+CREATE INDEX IF NOT EXISTS idx_spend_team        ON spend_entries(team);
+CREATE INDEX IF NOT EXISTS idx_spend_user_id     ON spend_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_spend_project     ON spend_entries(project);
+CREATE INDEX IF NOT EXISTS idx_spend_ai_category ON spend_entries(ai_category);
 
 CREATE TABLE IF NOT EXISTS poll_cursors (
     provider    TEXT PRIMARY KEY,
@@ -105,8 +111,37 @@ CREATE TABLE IF NOT EXISTS poll_cursors (
 """
 
 
+_MIGRATIONS: list[tuple[str, str]] = [
+    # (column_name, ALTER TABLE definition)
+    ("user_id",     "TEXT"),
+    ("project",     "TEXT"),
+    ("ai_category", "TEXT NOT NULL DEFAULT 'unknown'"),
+]
+
+
+def _migrate(con: sqlite3.Connection) -> None:
+    """Add new columns to existing databases without dropping data.
+
+    Must run before executescript(_SCHEMA) so that CREATE INDEX statements
+    referencing the new columns don't fail on old tables.
+    """
+    table_exists = con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='spend_entries'"
+    ).fetchone()
+    if not table_exists:
+        return  # fresh install — executescript handles everything
+
+    existing = {row["name"] for row in con.execute("PRAGMA table_info(spend_entries)")}
+    for col, defn in _MIGRATIONS:
+        if col not in existing:
+            con.execute(f"ALTER TABLE spend_entries ADD COLUMN {col} {defn}")  # noqa: S608
+            log.info("Migration: added column %s to spend_entries", col)
+    con.commit()
+
+
 def init_db() -> None:
     with _conn() as con:
+        _migrate(con)          # add any missing columns before running schema script
         con.executescript(_SCHEMA)
     log.info("Database initialised at %s", get_db_path())
 
@@ -120,8 +155,9 @@ def insert_entry(entry: SpendEntry) -> None:
         INSERT OR IGNORE INTO spend_entries
             (id, timestamp, provider, model, workload_class,
              input_tokens, output_tokens, reasoning_tokens,
-             cost_usd, is_local, team, feature, notes, source)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             cost_usd, is_local, team, feature, notes, source,
+             user_id, project, ai_category)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """
     with _conn() as con:
         con.execute(sql, (
@@ -139,6 +175,9 @@ def insert_entry(entry: SpendEntry) -> None:
             entry.feature,
             entry.notes,
             entry.source.value,
+            entry.user_id,
+            entry.project,
+            entry.ai_category.value,
         ))
 
 
@@ -148,14 +187,16 @@ def insert_entries_bulk(entries: list[SpendEntry]) -> int:
         INSERT OR IGNORE INTO spend_entries
             (id, timestamp, provider, model, workload_class,
              input_tokens, output_tokens, reasoning_tokens,
-             cost_usd, is_local, team, feature, notes, source)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             cost_usd, is_local, team, feature, notes, source,
+             user_id, project, ai_category)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """
     rows = [
         (e.id, e.timestamp.isoformat(), e.provider.value, e.model,
          e.workload_class.value, e.input_tokens, e.output_tokens,
          e.reasoning_tokens, e.cost_usd, int(e.is_local),
-         e.team, e.feature, e.notes, e.source.value)
+         e.team, e.feature, e.notes, e.source.value,
+         e.user_id, e.project, e.ai_category.value)
         for e in entries
     ]
     with _conn() as con:
@@ -171,6 +212,9 @@ def fetch_entries(
     *,
     provider: str | None = None,
     team: str | None = None,
+    user_id: str | None = None,
+    project: str | None = None,
+    ai_category: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int = 10_000,
@@ -184,6 +228,15 @@ def fetch_entries(
     if team:
         clauses.append("team = ?")
         params.append(team)
+    if user_id:
+        clauses.append("user_id = ?")
+        params.append(user_id)
+    if project:
+        clauses.append("project = ?")
+        params.append(project)
+    if ai_category:
+        clauses.append("ai_category = ?")
+        params.append(ai_category)
     if since:
         clauses.append("timestamp >= ?")
         params.append(since.isoformat())

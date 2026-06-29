@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from src.models import EntrySource, Provider, SpendEntry
+from src.models import AICategory, EntrySource, Provider, SpendEntry
 from src.parsers.base import infer_is_local, infer_workload_class
 from src.polling.base import mask_key, safe_post
 
@@ -186,8 +186,8 @@ def _to_entry(event: dict[str, Any]) -> SpendEntry | None:
     if ts is None:
         return None
 
-    team    = event.get("userEmail")       # closest proxy for team attribution
-    feature = event.get("kind", "")        # "chat", "agent", "cmd", etc.
+    user_email = event.get("userEmail")
+    feature    = event.get("kind", "")    # "chat", "agent", "cmd", etc.
 
     return SpendEntry(
         timestamp=ts,
@@ -199,9 +199,11 @@ def _to_entry(event: dict[str, Any]) -> SpendEntry | None:
         reasoning_tokens=cache_tok,
         cost_usd=round(cost_usd, 8),
         is_local=infer_is_local(model),
-        team=team,
+        team=user_email,           # kept for backwards compat with existing filters
         feature=feature,
         source=EntrySource.cursor_api,
+        user_id=user_email,        # canonical user attribution field
+        ai_category=AICategory.code_gen,  # Cursor is code gen by definition
     )
 
 
