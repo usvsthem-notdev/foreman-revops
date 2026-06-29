@@ -11,6 +11,7 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta
 
+from src.analytics.classifier import classify
 from src.db import fetch_entries, insert_entries_bulk, upsert_budget
 from src.models import (
     Budget,
@@ -100,6 +101,7 @@ def seed_if_empty() -> bool:
                 else ((in_tok + r_tok) * in_rate + out_tok * out_rate) / 1_000
             )
 
+            ai_cat, confidence = classify(prov.value, cls.value)
             entries.append(SpendEntry(
                 timestamp=ts,
                 provider=prov,
@@ -113,12 +115,12 @@ def seed_if_empty() -> bool:
                 team=rng.choice(_TEAMS),
                 feature=rng.choice(_FEATURES),
                 source=EntrySource.manual,
+                ai_category=ai_cat,
+                tag_confidence=confidence,
+                tag_needs_review=confidence < 0.70,
             ))
 
     insert_entries_bulk(entries)
-
-    from src.analytics.classifier import classify_pending
-    classify_pending(limit=len(entries))
 
     for b in [
         Budget(name="Monthly total",    amount_usd=4_000, period=BudgetPeriod.monthly, alert_threshold=0.80),
