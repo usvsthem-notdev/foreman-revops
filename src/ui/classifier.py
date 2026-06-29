@@ -1,10 +1,11 @@
 """
 AI Category Classifier tab.
 
-Three sections:
+Four sections:
   01 · COVERAGE   — classified / pending / unclassified counts + run button
   02 · BREAKDOWN  — cost and entry count by category, confidence histogram
   03 · RULES      — the classifier rule table (read-only reference)
+  04 · AI REVIEW  — LLM-assisted reclassification of low-confidence entries
 """
 from __future__ import annotations
 
@@ -45,6 +46,7 @@ def render(df: pd.DataFrame) -> None:
     _render_coverage(df)
     _render_breakdown(df)
     _render_rules()
+    _render_llm_review(df)
 
 
 # ---------------------------------------------------------------------------
@@ -261,3 +263,81 @@ def _render_rules() -> None:
         "Entries highlighted in red are below the confidence threshold and require human sign-off "
         "before the category is treated as final. Contact your admin to adjust categorization rules."
     )
+
+
+# ---------------------------------------------------------------------------
+# 04 · AI REVIEW
+# ---------------------------------------------------------------------------
+
+def _render_llm_review(df: pd.DataFrame) -> None:
+    import os
+    from src.polling.key_store import has_key
+
+    st.markdown('<div class="foreman-section">04 · AI REVIEW</div>', unsafe_allow_html=True)
+    st.caption(
+        "Send low-confidence entries to an AI model for context-aware reclassification. "
+        "The model reads the full entry — tool name, feature, notes, team — "
+        "not just the provider and workload class the rules use."
+    )
+
+    # Disabled on the public demo
+    if os.environ.get("SPACE_ID"):
+        st.info("AI-assisted review is not available in the demo. Run Foreman locally to use this feature.")
+        return
+
+    needs_review = int(df["tag_needs_review"].sum()) if "tag_needs_review" in df.columns else 0
+
+    if needs_review == 0:
+        st.success("No entries need review — all categories are high-confidence.")
+        return
+
+    # Detect which provider keys are available
+    available = [p for p in ("anthropic", "openai") if has_key(p)]
+
+    if not available:
+        st.info(
+            f"**{needs_review:,} entries are flagged for review** but no API key is configured.  \n"
+            "Add an Anthropic or OpenAI key in the **Live API** tab to enable AI-assisted review."
+        )
+        return
+
+    _PROVIDER_LABELS = {"anthropic": "Claude (Haiku)", "openai": "GPT-4o mini"}
+    col_sel, col_btn = st.columns([2, 1])
+
+    with col_sel:
+        chosen = st.selectbox(
+            "Model to use",
+            options=available,
+            format_func=lambda p: _PROVIDER_LABELS.get(p, p),
+            key="llm_clf_provider",
+        )
+        st.caption(
+            f"**{needs_review:,} entries** are below the confidence threshold. "
+            f"Each call costs roughly $0.0001–0.001 depending on notes length."
+        )
+
+    with col_btn:
+        st.markdown("<br>", unsafe_allow_html=True)
+        run = st.button("Run AI review", type="primary", key="llm_clf_run")
+
+    if run:
+        from src.analytics.llm_classifier import classify_needs_review
+        progress = st.progress(0, text="Starting…")
+        with st.spinner(f"Reviewing {needs_review:,} entries with {_PROVIDER_LABELS[chosen]}…"):
+            n, errors = classify_needs_review(llm_provider=chosen, limit=needs_review)
+        progress.progress(1.0, text="Done.")
+
+        if n:
+            st.success(f"Reclassified **{n:,}** entries. Reload to see updated categories.")
+            if "llm_review_count" not in st.session_state:
+                st.session_state["llm_review_count"] = n
+            st.rerun()
+
+        if errors:
+            with st.expander(f"{len(errors)} error(s)"):
+                for e in errors:
+                    st.warning(e)
+
+    if "llm_review_count" in st.session_state:
+        n = st.session_state.pop("llm_review_count")
+        st.success(f"AI review complete — reclassified {n:,} entries.")
