@@ -158,14 +158,12 @@ def _render_breakdown(df: pd.DataFrame) -> None:
                 annotation_position="top right",
                 annotation_font_color=CLAY,
             )
+            fig2.update_layout(**PLOTLY_LAYOUT, height=220, showlegend=False)
             fig2.update_layout(
-                **PLOTLY_LAYOUT,
-                height=220,
                 xaxis=dict(tickformat=".0%", range=[0, 1]),
                 yaxis=dict(**PLOTLY_YAXIS, title="Entries"),
-                showlegend=False,
+                margin=dict(l=40, r=20, t=20, b=20),
             )
-            fig2.update_layout(margin=dict(l=40, r=20, t=20, b=20))
             st.plotly_chart(fig2, use_container_width=True)
 
     # ── Entry explorer ──
