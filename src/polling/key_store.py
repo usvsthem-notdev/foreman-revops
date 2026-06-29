@@ -92,7 +92,9 @@ def set_key(provider: str, key: str) -> None:
     local = _read()
     local[env_name] = key
     _write(local)
-    os.environ[env_name] = key
+    # Do NOT inject into os.environ here: that would make the key available
+    # to all concurrent Streamlit sessions (process-global state).  The key
+    # is readable via _read() / get_key() in all subsequent calls.
     log.info("Key for provider=%s written to .env.local", provider)
 
 

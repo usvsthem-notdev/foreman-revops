@@ -22,7 +22,7 @@ from src.polling import anthropic as anthropic_poller
 from src.polling import cursor as cursor_poller
 from src.polling import openai as openai_poller
 from src.polling.base import mask_key, validate_key_format
-from src.polling.key_store import clear_key, get_key, has_key, key_source, set_key
+from src.polling.key_store import clear_key, get_key, has_key, key_source, set_key  # noqa: F401
 from src.polling.scheduler import read_heartbeat
 
 log = logging.getLogger(__name__)
@@ -69,6 +69,16 @@ def render() -> None:
         "Pull usage data directly from provider APIs. "
         "Keys are stored locally in .env.local (0o600) — never in the database."
     )
+
+    # Shared-deployment warning — HuggingFace Spaces sets SPACE_ID
+    if os.environ.get("SPACE_ID"):
+        st.warning(
+            "**Shared deployment detected.**  \n"
+            "API keys entered here are stored in `.env.local` on the Space's filesystem. "
+            "This Space is accessible to anyone with the URL — do not enter production keys. "
+            "Run Foreman locally or in a private Docker container for secure key storage.",
+            icon="⚠️",
+        )
 
     _render_scheduler_status()
     st.divider()
@@ -278,6 +288,15 @@ def _run_poll(provider: str, cfg: dict, since: date, until: date) -> None:
         st.info("No new usage data returned for this date range.")
 
     if errors:
+        # Auto-clear a key that has been revoked so the scheduler stops retrying it
+        auth_failure = any("401" in e or "403" in e for e in errors)
+        if auth_failure:
+            clear_key(provider)
+            st.error(
+                f"Authentication failed — the {label} key has been removed. "
+                "Enter a new key below."
+            )
+
         st.markdown("##### Warnings / errors")
         for err in errors:
             safe_err = html.escape(err)
