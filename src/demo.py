@@ -117,6 +117,9 @@ def seed_if_empty() -> bool:
 
     insert_entries_bulk(entries)
 
+    from src.analytics.classifier import classify_pending
+    classify_pending(limit=len(entries))
+
     for b in [
         Budget(name="Monthly total",    amount_usd=4_000, period=BudgetPeriod.monthly, alert_threshold=0.80),
         Budget(name="Frontier only",    amount_usd=3_500, period=BudgetPeriod.monthly, alert_threshold=0.85),
