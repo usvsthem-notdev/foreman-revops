@@ -36,6 +36,20 @@ _RULES: list[tuple[str | None, str | None, AICategory, float]] = [
 ]
 
 
+def get_rules() -> list[dict]:
+    """Return the rule table as plain dicts for display in the UI."""
+    return [
+        {
+            "provider":       prov if prov and prov != "*" else "any",
+            "workload":       wc   if wc   and wc   != "*" else "any",
+            "category":       cat.value,
+            "confidence":     conf,
+            "needs_review":   conf < REVIEW_THRESHOLD,
+        }
+        for prov, wc, cat, conf in _RULES
+    ]
+
+
 def classify(
     provider: str,
     workload_class: str,

@@ -138,6 +138,13 @@ PLOTLY_YAXIS = dict(gridcolor=SAND, linecolor=SAND, zeroline=False)
 
 # Display-name maps for internal enum values — use these everywhere a C-suite
 # user could see the raw enum string.
+AI_CAT_LABELS: dict[str, str] = {
+    "code_gen":        "Code Generation",
+    "research":        "Research & Analysis",
+    "document_office": "Documents & Office",
+    "unknown":         "Unclassified",
+}
+
 WC_LABELS: dict[str, str] = {
     "extract": "Data Extraction",
     "rag":     "RAG / Retrieval",
