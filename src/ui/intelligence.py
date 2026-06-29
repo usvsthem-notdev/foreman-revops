@@ -12,26 +12,32 @@ from src.analytics.classifier import REVIEW_THRESHOLD, classify_pending
 from src.analytics.intelligence import Finding, Proposal, generate_report
 from src.db import fetch_pending_review, fetch_unclassified, tag_entry
 from src.models import AICategory
+from src.ui.theme import WC_LABELS
 
 
 def render(df: pd.DataFrame) -> None:
-    _render_pending_review()
+    # Fetch counts before rendering so we can include pending in the header row
+    pending_count    = len(fetch_pending_review(limit=200))
+    unclassified_any = bool(fetch_unclassified(limit=1))
+
+    if not df.empty:
+        report = generate_report(df)
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Findings",              len(report.findings))
+        c2.metric("Proposals",             len(report.proposals))
+        c3.metric("Est. potential savings", f"${report.total_potential_savings_usd:,.2f}")
+        c4.metric("Pending review",        pending_count,
+                  help="Low-confidence AI category tags awaiting your confirmation.")
+
+    _render_pending_review(pending_count, unclassified_any)
 
     if df.empty:
         st.info("Import spend data to generate intelligence findings.")
         return
 
-    report = generate_report(df)
-
-    # ---- Header metrics ----
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Findings",             len(report.findings))
-    c2.metric("Proposals",            len(report.proposals))
-    c3.metric("Est. potential savings", f"${report.total_potential_savings_usd:,.2f}")
-
     # ---- Step 01: Detect ----
     st.markdown('<div class="foreman-section">01 · DETECT</div>', unsafe_allow_html=True)
-    st.caption("concentration · drift · waste · untagged")
+    st.caption("Single-model risk · Spend acceleration · Token waste · Unclassified entries")
 
     if not report.findings:
         st.success("No significant findings. Spend looks healthy.")
@@ -84,7 +90,7 @@ def render(df: pd.DataFrame) -> None:
     st.caption("approved policy — class-level routing guidance")
 
     for cls, rec in report.workload_library.items():
-        label = f"**{cls.upper()}** — {rec[:60]}…" if len(rec) > 60 else f"**{cls.upper()}**"
+        label = WC_LABELS.get(cls, cls.upper())
         with st.expander(label):
             st.write(rec)
 
@@ -135,11 +141,10 @@ def _render_proposal(p: Proposal) -> None:
 _CATEGORY_OPTIONS = [c.value for c in AICategory]
 
 
-def _render_pending_review() -> None:
-    unclassified = fetch_unclassified(limit=1)
-    pending = fetch_pending_review(limit=200)
+def _render_pending_review(pending_count: int, unclassified_any: bool) -> None:
+    pending = fetch_pending_review(limit=200) if pending_count > 0 else []
 
-    if not unclassified and not pending:
+    if not unclassified_any and not pending:
         return
 
     st.markdown(
@@ -151,7 +156,7 @@ def _render_pending_review() -> None:
         "before these tags are treated as ground truth."
     )
 
-    if unclassified:
+    if unclassified_any:
         col_btn, col_note = st.columns([1, 3])
         with col_btn:
             if st.button("Run classifier", type="primary", key="run_classifier"):

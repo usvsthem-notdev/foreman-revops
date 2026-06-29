@@ -28,11 +28,14 @@ def render(df: pd.DataFrame, budgets_raw: list[dict]) -> None:
     col_inputs, col_metrics = st.columns([1, 2])
 
     with col_inputs:
-        mau = st.number_input("Monthly Active Users (MAU)", min_value=1, value=1000, step=100)
-        mrr = st.number_input("MRR (USD)", min_value=0.0, value=50_000.0, step=1_000.0, format="%.2f")
+        # key= persists values within the session so tab-switching doesn't reset them
+        mau = st.number_input("Monthly Active Users (MAU)", min_value=1, value=1000, step=100,
+                              key="fin_mau")
+        mrr = st.number_input("MRR (USD)", min_value=0.0, value=50_000.0, step=1_000.0,
+                              format="%.2f", key="fin_mrr")
         txn = st.number_input(
             "Transactions / month (optional)",
-            min_value=0, value=0, step=1,
+            min_value=0, value=0, step=1, key="fin_txn",
             help="API calls, completions, orders — leave 0 to skip cost-per-transaction.",
         )
 
@@ -51,10 +54,14 @@ def render(df: pd.DataFrame, budgets_raw: list[dict]) -> None:
             r1c3.metric("LLM % of MRR",            f"{ue['llm_pct_of_mrr']:.2f}%")
 
             r2c1, r2c2, r2c3 = st.columns(3)
-            r2c1.metric("Effective gross margin",  f"{ue['effective_gross_margin_pct']:.2f}%",
-                        help="(MRR − monthly LLM cost) / MRR — excludes all other COGS.")
+            r2c1.metric("Effective gross margin",  f"{ue['effective_gross_margin_pct']:.2f}%")
             r2c2.metric("Frontier spend / mo",     f"${ue['monthly_frontier_usd']:,.2f}")
             r2c3.metric("Absorbed (local) / mo",   f"${ue['monthly_absorbed_usd']:,.2f}")
+
+            st.caption(
+                "Effective gross margin = (MRR − monthly LLM cost) / MRR. "
+                "**Excludes all other COGS** — infrastructure, headcount, etc."
+            )
 
             if "cost_per_transaction_usd" in ue:
                 st.metric("Cost / transaction", f"${ue['cost_per_transaction_usd']:.6f}")
@@ -63,6 +70,16 @@ def render(df: pd.DataFrame, budgets_raw: list[dict]) -> None:
     st.markdown('<div class="foreman-section">02 · PERIOD VARIANCE</div>', unsafe_allow_html=True)
 
     n_months = st.slider("Months to show", min_value=1, max_value=12, value=3)
+
+    # Warn when the sidebar date filter is narrower than the variance window
+    if not df.empty:
+        df_days = (df["timestamp"].max() - df["timestamp"].min()).days
+        if df_days < n_months * 28:
+            st.warning(
+                f"Your date filter covers {df_days} days — less than {n_months} month(s). "
+                "Extend the date range in the sidebar to see full period history."
+            )
+
     summary = period_summary(df, budgets=budgets_raw if budgets_raw else None, n_months=n_months)
 
     if summary.empty:
@@ -90,17 +107,21 @@ def render(df: pd.DataFrame, budgets_raw: list[dict]) -> None:
                "Compatible with NetSuite, QuickBooks, Sage, and Xero.")
 
     gl_period = st.radio("Aggregation period", ["month", "quarter", "week"], horizontal=True, key="gl_period_radio")
+    st.caption(
+        "Aggregation period above is independent of the period variance slider. "
+        "Debit-only memo rows — pair with your AP/Accrued Liabilities account for double-entry import."
+    )
     gl_df = gl_export_df(df, period=gl_period)
 
     if gl_df.empty:
-        st.info("No GL rows to export.")
+        st.info("No rows to export.")
     else:
         st.dataframe(gl_df, use_container_width=True, hide_index=True)
 
         csv_bytes = gl_df.to_csv(index=False).encode()
         st.download_button(
-            label="Download GL CSV",
+            label="Download Cost Report CSV",
             data=csv_bytes,
-            file_name=f"foreman_gl_export_{gl_period}.csv",
+            file_name=f"foreman_cost_report_{gl_period}.csv",
             mime="text/csv",
         )

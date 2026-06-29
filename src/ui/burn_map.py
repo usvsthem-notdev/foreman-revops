@@ -15,7 +15,7 @@ from src.analytics.burn_map import (
     cumulative_burn,
     key_metrics,
 )
-from src.ui.theme import CLAY, PLOTLY_COLORS, PLOTLY_LAYOUT, PLOTLY_YAXIS, SAGE, SLATE
+from src.ui.theme import CLAY, PLOTLY_COLORS, PLOTLY_LAYOUT, PLOTLY_YAXIS, SAGE, SLATE, WC_LABELS
 
 
 def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
@@ -34,7 +34,12 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
         ),
         delta_color="inverse",
     )
-    c3.metric("Local Absorbed", f"{metrics['local_pct']:.1f}%")
+    c3.metric(
+        "Local Absorbed",
+        f"${metrics['absorbed_cost_usd']:,.2f}",
+        delta=f"{metrics['local_pct']:.1f}% of total",
+        delta_color="off",
+    )
     c4.metric("Entries", f"{metrics['entry_count']:,}")
 
     if df.empty:
@@ -45,13 +50,22 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
     if budgets_status:
         st.markdown('<div class="foreman-section">BUDGETS</div>', unsafe_allow_html=True)
         for b in budgets_status:
+            remaining = b["amount_usd"] - b["spent_usd"]
+            over = remaining < 0
+            color = "🔴" if b["over_threshold"] else "🟢"
             label = (
                 f"{b['name']}  ·  {b['period']}"
                 f"  ·  ${b['spent_usd']:,.2f} / ${b['amount_usd']:,.2f}"
             )
-            color = "🔴" if b["over_threshold"] else "🟢"
-            st.markdown(f"{color} **{label}**")
-            st.progress(float(b["pct_used"]))
+            col_bar, col_rem = st.columns([5, 1])
+            with col_bar:
+                st.markdown(f"{color} **{label}**")
+                st.progress(float(b["pct_used"]))
+            with col_rem:
+                st.metric(
+                    "Over" if over else "Left",
+                    f"${abs(remaining):,.2f}",
+                )
 
     # ---- Burn by workload class (FIG. 03 main chart) ----
     st.markdown(
@@ -60,15 +74,19 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
     )
     class_df = burn_by_class(df)
     if not class_df.empty:
+        class_df = class_df.copy()
+        class_df["workload_class"] = class_df["workload_class"].map(
+            lambda x: WC_LABELS.get(x, x)
+        )
         fig = go.Figure()
         fig.add_bar(
-            name="Absorbed locally",
+            name="Local / on-prem",
             x=class_df["workload_class"],
             y=class_df["absorbed_usd"],
             marker_color=SAGE,
         )
         fig.add_bar(
-            name="Frontier spend",
+            name="API / external",
             x=class_df["workload_class"],
             y=class_df["frontier_usd"],
             marker_color=CLAY,
@@ -77,11 +95,11 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
             **PLOTLY_LAYOUT,
             barmode="stack",
             height=320,
-            xaxis_title="Workload class",
+            xaxis_title="AI use category",
             yaxis=dict(**PLOTLY_YAXIS, title="Cost (USD)", tickprefix="$"),
         )
         st.plotly_chart(fig, use_container_width=True)
-        st.caption("**Sage** = absorbed locally  ·  **Clay** = frontier spend")
+        st.caption("Green = Local / on-prem models  ·  Orange = API / external spend")
 
     # ---- Daily burn + cumulative ----
     st.markdown('<div class="foreman-section">DAILY BURN</div>', unsafe_allow_html=True)

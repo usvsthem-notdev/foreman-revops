@@ -94,6 +94,8 @@ def period_summary(
     df = df.copy()
     df["timestamp"] = pd.to_datetime(df["timestamp"])
     df["month"] = df["timestamp"].dt.to_period("M")
+    # Normalise team names so "Sales", "sales", " sales" group together
+    df["team"] = df["team"].fillna("(untagged)").str.strip().str.lower()
 
     cutoff = pd.Period(datetime.utcnow(), "M") - n_months
     df = df[df["month"] > cutoff]
@@ -113,12 +115,21 @@ def period_summary(
     if budgets:
         team_budgets: dict[str, float] = {}
         for b in budgets:
-            team = b.get("team") or "all"
-            if b.get("period") == "monthly":
-                team_budgets[team] = float(b["amount_usd"])
+            team = (b.get("team") or "all").strip().lower()
+            amount = float(b["amount_usd"])
+            period = b.get("period", "monthly")
+            # Prorate daily and weekly budgets to a monthly equivalent so they
+            # appear in the variance table alongside monthly budgets.
+            if period == "daily":
+                amount = amount * 30.44
+            elif period == "weekly":
+                amount = amount * 4.33
+            # "monthly" needs no adjustment
+            team_budgets[team] = amount
 
         def _apply_budget(row):
-            budget = team_budgets.get(row["team"], team_budgets.get("all"))
+            team_key = (row["team"] or "").strip().lower()
+            budget = team_budgets.get(team_key, team_budgets.get("all"))
             if budget is None:
                 return row
             row["budget_usd"]    = budget

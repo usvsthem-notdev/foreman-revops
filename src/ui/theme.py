@@ -135,3 +135,26 @@ PLOTLY_LAYOUT = dict(
 # Default y-axis style — merge into per-chart yaxis dicts rather than spreading
 # into update_layout() alongside an explicit yaxis= kwarg (would cause TypeError).
 PLOTLY_YAXIS = dict(gridcolor=SAND, linecolor=SAND, zeroline=False)
+
+# Display-name maps for internal enum values — use these everywhere a C-suite
+# user could see the raw enum string.
+WC_LABELS: dict[str, str] = {
+    "extract": "Data Extraction",
+    "rag":     "RAG / Retrieval",
+    "reason":  "Reasoning",
+    "agents":  "Agents",
+    "coding":  "Code Generation",
+    "unknown": "Unclassified",
+}
+
+PROVIDER_LABELS: dict[str, str] = {
+    "All":       "All providers",
+    "anthropic": "Anthropic",
+    "openai":    "OpenAI",
+    "google":    "Google / Gemini",
+    "gemini":    "Gemini",
+    "cursor":    "Cursor",
+    "mistral":   "Mistral",
+    "together":  "Together AI",
+    "other":     "Other",
+}

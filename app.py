@@ -17,7 +17,7 @@ from src.analytics.burn_map import budget_status, load_dataframe
 from src.db import fetch_budgets, init_db
 from src.demo import seed_if_empty
 from src.ui import api_poll, bill_analyzer, burn_map, entry, finance, intelligence, settings
-from src.ui.theme import BONE, CSS
+from src.ui.theme import BONE, CSS, PROVIDER_LABELS
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,7 +94,8 @@ with st.sidebar:
     # Provider filter
     provider_filter = st.selectbox(
         "Provider",
-        options=["All", "anthropic", "openai", "google", "mistral", "together", "other"],
+        options=["All", "anthropic", "openai", "google", "gemini", "cursor", "mistral", "together", "other"],
+        format_func=lambda x: PROVIDER_LABELS.get(x, x),
     )
 
     # Team filter
@@ -139,13 +140,19 @@ budgets_stat = budget_status(df, budgets_raw) if not df.empty else []
 # ---------------------------------------------------------------------------
 
 TABS = [
-    "Burn Map", "Bill Analyzer", "Live API",
-    "Manual Entry", "Spend Intelligence", "Finance", "Settings",
+    "Burn Map", "Finance", "Spend Intelligence",
+    "Bill Analyzer", "Live API", "Manual Entry", "Settings",
 ]
-tab_burn, tab_bill, tab_api, tab_entry, tab_intel, tab_finance, tab_settings = st.tabs(TABS)
+tab_burn, tab_finance, tab_intel, tab_bill, tab_api, tab_entry, tab_settings = st.tabs(TABS)
 
 with tab_burn:
     burn_map.render(df, budgets_stat)
+
+with tab_finance:
+    finance.render(df, budgets_raw)
+
+with tab_intel:
+    intelligence.render(df)
 
 with tab_bill:
     bill_analyzer.render()
@@ -155,12 +162,6 @@ with tab_api:
 
 with tab_entry:
     entry.render()
-
-with tab_intel:
-    intelligence.render(df)
-
-with tab_finance:
-    finance.render(df, budgets_raw)
 
 with tab_settings:
     settings.render()

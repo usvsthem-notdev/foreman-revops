@@ -66,10 +66,14 @@ def _render_budgets() -> None:
         st.info("No budgets set.")
     else:
         for b in budgets:
-            col_name, col_amount, col_period, col_del = st.columns([3, 2, 2, 1])
+            col_name, col_amount, col_period, col_prov, col_team, col_thresh, col_del = \
+                st.columns([3, 2, 1, 2, 2, 1, 1])
             col_name.write(f"**{b['name']}**")
             col_amount.write(f"${b['amount_usd']:,.2f}")
             col_period.write(b["period"])
+            col_prov.write(b.get("provider") or "All")
+            col_team.write(b.get("team") or "All")
+            col_thresh.write(f"{b.get('alert_threshold', 0.8):.0%}")
             if col_del.button("✕", key=f"del_budget_{b['id']}"):
                 delete_budget(b["id"])
                 st.rerun()
