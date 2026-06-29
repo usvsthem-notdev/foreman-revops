@@ -8,10 +8,15 @@ import html as _html
 import pandas as pd
 import streamlit as st
 
+from src.analytics.classifier import REVIEW_THRESHOLD, classify_pending
 from src.analytics.intelligence import Finding, Proposal, generate_report
+from src.db import fetch_pending_review, fetch_unclassified, tag_entry
+from src.models import AICategory
 
 
 def render(df: pd.DataFrame) -> None:
+    _render_pending_review()
+
     if df.empty:
         st.info("Import spend data to generate intelligence findings.")
         return
@@ -121,3 +126,98 @@ def _render_proposal(p: Proposal) -> None:
         st.caption(f"Guardrail: {p.guardrail}")
         if p.affected_models:
             st.caption(f"Affected models: {', '.join(p.affected_models[:5])}")
+
+
+# ---------------------------------------------------------------------------
+# Pending review — Need mark equivalent
+# ---------------------------------------------------------------------------
+
+_CATEGORY_OPTIONS = [c.value for c in AICategory]
+
+
+def _render_pending_review() -> None:
+    unclassified = fetch_unclassified(limit=1)
+    pending = fetch_pending_review(limit=200)
+
+    if not unclassified and not pending:
+        return
+
+    st.markdown(
+        '<div class="foreman-section">00 · PENDING REVIEW</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"Classifier confidence below {REVIEW_THRESHOLD:.0%} — confirm or override "
+        "before these tags are treated as ground truth."
+    )
+
+    if unclassified:
+        col_btn, col_note = st.columns([1, 3])
+        with col_btn:
+            if st.button("Run classifier", type="primary", key="run_classifier"):
+                with st.spinner("Classifying…"):
+                    n = classify_pending()
+                st.success(f"Classified {n} entries.")
+                st.rerun()
+        with col_note:
+            st.caption(
+                "Assigns ai_category from provider + model + workload class. "
+                "Results below the confidence threshold land here for review."
+            )
+        if pending:
+            st.divider()
+
+    if pending:
+        st.write(f"**{len(pending)}** {'entry' if len(pending) == 1 else 'entries'} "
+                 "awaiting confirmation:")
+        for entry in pending:
+            _render_review_row(entry)
+
+    st.divider()
+
+
+def _render_review_row(entry: dict) -> None:
+    eid        = entry["id"]
+    confidence = entry.get("tag_confidence") or 0.0
+    proposed   = entry.get("ai_category", "unknown")
+    provider   = entry.get("provider", "")
+    model      = (entry.get("model") or "")[:48]
+    wc         = entry.get("workload_class", "")
+    team       = entry.get("team") or entry.get("user_id") or "untagged"
+    date       = (entry.get("timestamp") or "")[:10]
+
+    with st.container(border=True):
+        col_info, col_action = st.columns([3, 2])
+
+        with col_info:
+            st.markdown(f"**{_html.escape(provider)}** · `{_html.escape(model)}`")
+            st.caption(
+                f"workload: {_html.escape(wc)} · "
+                f"team: {_html.escape(str(team))} · {date}"
+            )
+            st.progress(
+                confidence,
+                text=f"Confidence {confidence:.0%} → proposed: **{proposed}**",
+            )
+
+        with col_action:
+            try:
+                default_idx = _CATEGORY_OPTIONS.index(proposed)
+            except ValueError:
+                default_idx = _CATEGORY_OPTIONS.index("unknown")
+
+            chosen = st.selectbox(
+                "Category",
+                options=_CATEGORY_OPTIONS,
+                index=default_idx,
+                key=f"cat_{eid}",
+                label_visibility="collapsed",
+            )
+            if st.button("Confirm", key=f"confirm_{eid}"):
+                tag_entry(
+                    eid,
+                    ai_category=AICategory(chosen),
+                    confidence=confidence,
+                    needs_review=False,
+                )
+                st.rerun()

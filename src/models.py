@@ -76,6 +76,8 @@ class SpendEntry(BaseModel):
     user_id: str | None = Field(default=None, max_length=256)
     project: str | None = Field(default=None, max_length=128)
     ai_category: AICategory = AICategory.unknown
+    tag_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    tag_needs_review: bool = False
 
     @field_validator("model", "team", "feature", "notes", "user_id", "project", mode="before")
     @classmethod

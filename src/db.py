@@ -81,7 +81,9 @@ CREATE TABLE IF NOT EXISTS spend_entries (
     source          TEXT NOT NULL DEFAULT 'manual',
     user_id         TEXT,
     project         TEXT,
-    ai_category     TEXT NOT NULL DEFAULT 'unknown'
+    ai_category     TEXT NOT NULL DEFAULT 'unknown',
+    tag_confidence  REAL,
+    tag_needs_review INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS budgets (
@@ -113,9 +115,11 @@ CREATE TABLE IF NOT EXISTS poll_cursors (
 
 _MIGRATIONS: list[tuple[str, str]] = [
     # (column_name, ALTER TABLE definition)
-    ("user_id",     "TEXT"),
-    ("project",     "TEXT"),
-    ("ai_category", "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("user_id",          "TEXT"),
+    ("project",          "TEXT"),
+    ("ai_category",      "TEXT NOT NULL DEFAULT 'unknown'"),
+    ("tag_confidence",   "REAL"),
+    ("tag_needs_review", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -156,8 +160,9 @@ def insert_entry(entry: SpendEntry) -> None:
             (id, timestamp, provider, model, workload_class,
              input_tokens, output_tokens, reasoning_tokens,
              cost_usd, is_local, team, feature, notes, source,
-             user_id, project, ai_category)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             user_id, project, ai_category,
+             tag_confidence, tag_needs_review)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """
     with _conn() as con:
         con.execute(sql, (
@@ -178,6 +183,8 @@ def insert_entry(entry: SpendEntry) -> None:
             entry.user_id,
             entry.project,
             entry.ai_category.value,
+            entry.tag_confidence,
+            int(entry.tag_needs_review),
         ))
 
 
@@ -188,15 +195,17 @@ def insert_entries_bulk(entries: list[SpendEntry]) -> int:
             (id, timestamp, provider, model, workload_class,
              input_tokens, output_tokens, reasoning_tokens,
              cost_usd, is_local, team, feature, notes, source,
-             user_id, project, ai_category)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             user_id, project, ai_category,
+             tag_confidence, tag_needs_review)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """
     rows = [
         (e.id, e.timestamp.isoformat(), e.provider.value, e.model,
          e.workload_class.value, e.input_tokens, e.output_tokens,
          e.reasoning_tokens, e.cost_usd, int(e.is_local),
          e.team, e.feature, e.notes, e.source.value,
-         e.user_id, e.project, e.ai_category.value)
+         e.user_id, e.project, e.ai_category.value,
+         e.tag_confidence, int(e.tag_needs_review))
         for e in entries
     ]
     with _conn() as con:
@@ -257,6 +266,52 @@ def fetch_entries(
 def delete_entry(entry_id: str) -> None:
     with _conn() as con:
         con.execute("DELETE FROM spend_entries WHERE id = ?", (entry_id,))
+
+
+def tag_entry(
+    entry_id: str,
+    *,
+    ai_category: "AICategory",
+    confidence: float,
+    needs_review: bool,
+    project: str | None = None,
+    user_id: str | None = None,
+) -> None:
+    """Restricted write: only updates tagging fields, never touches spend or token data."""
+    with _conn() as con:
+        con.execute(
+            """UPDATE spend_entries
+               SET ai_category      = ?,
+                   tag_confidence   = ?,
+                   tag_needs_review = ?,
+                   project          = COALESCE(?, project),
+                   user_id          = COALESCE(?, user_id)
+               WHERE id = ?""",
+            (ai_category.value, confidence, int(needs_review),
+             project, user_id, entry_id),
+        )
+
+
+def fetch_unclassified(limit: int = 500) -> list[dict]:
+    """Return entries that haven't been through the classifier (tag_confidence IS NULL)."""
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT * FROM spend_entries WHERE tag_confidence IS NULL "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def fetch_pending_review(limit: int = 200) -> list[dict]:
+    """Return entries the classifier flagged as low-confidence, awaiting human confirmation."""
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT * FROM spend_entries WHERE tag_needs_review = 1 "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (int(limit),),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def clear_all_entries() -> None:
