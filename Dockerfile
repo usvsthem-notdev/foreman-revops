@@ -11,8 +11,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
 COPY src/ ./src/
+COPY foreman_optimizer/ ./foreman_optimizer/
 COPY app.py .
 COPY scheduler.py .
+COPY mcp_server.py .
 COPY .streamlit/ ./.streamlit/
 
 # Data volume for the SQLite database
