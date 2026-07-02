@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.analytics import mcp_usage
 from src.analytics.burn_map import (
     burn_by_class,
     burn_by_model,
@@ -188,3 +189,116 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
     t2.metric("Output tokens",    f"{metrics['total_output_tokens']:,}")
     t3.metric("Reasoning tokens", f"{metrics['total_reasoning_tokens']:,}")
     t4.metric("Cost / 1K tokens", f"${metrics['cost_per_1k_tokens']:.4f}")
+
+    # ---- Prompt / prefix cache ----
+    # cache_read_tokens is a subset of input_tokens billed at a steep
+    # discount (Anthropic ~90% off, OpenAI ~50% off) instead of full input
+    # price — surfaced separately so caching's $ impact isn't hidden inside
+    # the blended input-axis total above.
+    if metrics["total_cache_read_tokens"] > 0 or metrics["total_cache_creation_tokens"] > 0:
+        st.markdown(
+            '<div class="foreman-section">PROMPT / PREFIX CACHE</div>', unsafe_allow_html=True
+        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Cache hit rate", f"{metrics['cache_hit_rate']:.0f}%")
+        c2.metric("$ saved via caching", f"${metrics['cache_savings_usd']:,.2f}")
+        c3.metric("Cache read tokens", f"{metrics['total_cache_read_tokens']:,}")
+        c4.metric("Cache write tokens", f"{metrics['total_cache_creation_tokens']:,}")
+        st.caption(
+            "Cache reads are priced far below fresh input tokens (Anthropic "
+            "~90% off, OpenAI ~50% off) — the input $ split above already "
+            "prices them correctly, this is the discount's dollar impact."
+        )
+        if metrics["total_cost_usd"] <= 0 and metrics["cache_savings_usd"] > 0:
+            st.caption(
+                "⚠️ Total Spend for this period is $0, so '$ saved via caching' "
+                "is a list-price estimate from token volume alone, independent "
+                "of recorded cost — some sources (e.g. live-polled usage data) "
+                "don't report per-entry cost, so recorded spend here is "
+                "incomplete rather than truly zero."
+            )
+
+    # ---- Input vs output cost split ----
+    # Token *count* share and dollar *cost* share diverge because output is
+    # priced ~4-8x higher per token than input — this section makes that gap
+    # visible instead of leaving it buried inside a single cost_usd total.
+    st.markdown('<div class="foreman-section">INPUT vs OUTPUT COST</div>', unsafe_allow_html=True)
+    gap = metrics["input_token_share"] - metrics["input_cost_share"]
+    io1, io2, io3 = st.columns(3)
+    io1.metric(
+        "Input $ share",
+        f"{metrics['input_cost_share']:.0f}%",
+        delta=f"{metrics['input_token_share']:.0f}% of tokens",
+        delta_color="off",
+    )
+    io2.metric(
+        "Output $ share",
+        f"{100 - metrics['input_cost_share']:.0f}%",
+        delta=f"{100 - metrics['input_token_share']:.0f}% of tokens",
+        delta_color="off",
+    )
+    io3.metric("Input $", f"${metrics['input_cost_usd']:,.2f}")
+    has_token_data = (
+        metrics["total_input_tokens"]
+        + metrics["total_output_tokens"]
+        + metrics["total_reasoning_tokens"]
+    ) > 0
+    if has_token_data and abs(gap) >= 10:
+        st.caption(
+            f"Input is **{metrics['input_token_share']:.0f}%** of tokens but only "
+            f"**{metrics['input_cost_share']:.0f}%** of dollars — output tokens are "
+            "priced several times higher per token, so cutting output length moves "
+            "the bill more than cutting input volume."
+        )
+    elif not has_token_data and metrics["input_cost_usd"] > 0:
+        st.caption(
+            "This period has cost data but no recorded token counts (e.g. "
+            "flat-rate/invoice entries) — the input/output split above isn't "
+            "backed by real token volume."
+        )
+
+    # ---- MCP tool-call input burn ----
+    # Every MCP tool response gets read back into the calling agent's own
+    # context as input tokens on its next turn — a burn source that's real
+    # but invisible in provider billing, so it's tracked and shown separately.
+    mcp_df = mcp_usage.load_dataframe()
+    if not mcp_df.empty:
+        st.markdown(
+            '<div class="foreman-section">MCP TOOL-CALL INPUT BURN</div>', unsafe_allow_html=True
+        )
+        mcp_metrics = mcp_usage.key_metrics(mcp_df)
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Tool calls", f"{mcp_metrics['call_count']:,}")
+        m2.metric("Est. input tokens fed back", f"{mcp_metrics['total_input_tokens']:,}")
+        m3.metric("Est. $ (input-priced)", f"${mcp_metrics['total_estimated_usd']:,.4f}")
+        st.caption(
+            "Estimated tokens an MCP tool's JSON response adds to the calling "
+            "agent's context — not provider spend, a local estimate via the same "
+            "free heuristic foreman_optimizer uses."
+        )
+
+        col_tool, col_daily = st.columns(2)
+        with col_tool:
+            st.markdown("**By tool**")
+            tool_df = mcp_usage.by_tool(mcp_df)
+            if not tool_df.empty:
+                fig5 = go.Figure(go.Bar(
+                    x=tool_df["input_tokens"],
+                    y=tool_df["tool"],
+                    orientation="h",
+                    marker_color=SLATE,
+                ))
+                fig5.update_layout(**PLOTLY_LAYOUT, height=250, xaxis_title="Input tokens")
+                st.plotly_chart(fig5, use_container_width=True)
+
+        with col_daily:
+            st.markdown("**Daily trend**")
+            daily_df = mcp_usage.daily_input_tokens(mcp_df)
+            if not daily_df.empty:
+                fig6 = go.Figure(go.Bar(
+                    x=daily_df["date"].astype(str),
+                    y=daily_df["input_tokens"],
+                    marker_color=CLAY,
+                ))
+                fig6.update_layout(**PLOTLY_LAYOUT, height=250, yaxis_title="Input tokens")
+                st.plotly_chart(fig6, use_container_width=True)

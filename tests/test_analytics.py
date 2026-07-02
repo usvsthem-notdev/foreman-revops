@@ -28,6 +28,8 @@ def _make_df(rows: list[dict]) -> pd.DataFrame:
     df["input_tokens"] = df.get("input_tokens", 0)
     df["output_tokens"] = df.get("output_tokens", 0)
     df["reasoning_tokens"] = df.get("reasoning_tokens", 0)
+    df["cache_read_tokens"] = df.get("cache_read_tokens", 0)
+    df["cache_creation_tokens"] = df.get("cache_creation_tokens", 0)
     return df
 
 

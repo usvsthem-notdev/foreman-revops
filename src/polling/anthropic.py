@@ -139,7 +139,15 @@ def _to_entry(item: dict[str, Any]) -> SpendEntry | None:
 
     input_tok  = int(item.get("input_tokens",  item.get("n_context_tokens_total",   0)) or 0)
     output_tok = int(item.get("output_tokens", item.get("n_generated_tokens_total",  0)) or 0)
-    reason_tok = int(item.get("cache_read_tokens", 0) or 0)
+    # Anthropic's usage API has no reasoning-token concept (extended thinking
+    # is billed as output) — these are real prompt-cache counts, not reasoning.
+    cache_read_tok = int(item.get("cache_read_tokens", 0) or 0)
+    cache_creation_tok = int(item.get("cache_creation_tokens", 0) or 0)
+    # The API reports input_tokens as fresh-only, with cache tokens as
+    # separate additive fields — fold them in so input_tokens matches this
+    # app's "cache tokens are a subset of input_tokens" convention (same as
+    # the CSV parser's effective_input).
+    input_tok += cache_read_tok + cache_creation_tok
 
     if input_tok == 0 and output_tok == 0:
         return None
@@ -159,7 +167,9 @@ def _to_entry(item: dict[str, Any]) -> SpendEntry | None:
         workload_class=infer_workload_class(model),
         input_tokens=input_tok,
         output_tokens=output_tok,
-        reasoning_tokens=reason_tok,
+        reasoning_tokens=0,
+        cache_read_tokens=cache_read_tok,
+        cache_creation_tokens=cache_creation_tok,
         cost_usd=cost,
         is_local=infer_is_local(model),
         source=EntrySource.api,

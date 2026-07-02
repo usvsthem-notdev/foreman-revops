@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS spend_entries (
     input_tokens    INTEGER NOT NULL DEFAULT 0,
     output_tokens   INTEGER NOT NULL DEFAULT 0,
     reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens     INTEGER NOT NULL DEFAULT 0,
+    cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd        REAL NOT NULL DEFAULT 0.0,
     is_local        INTEGER NOT NULL DEFAULT 0,
     team            TEXT,
@@ -110,6 +112,18 @@ CREATE TABLE IF NOT EXISTS poll_cursors (
     since_date  TEXT NOT NULL,
     until_date  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS mcp_tool_calls (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,
+    tool            TEXT NOT NULL,
+    request_tokens  INTEGER NOT NULL DEFAULT 0,
+    response_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated_usd   REAL NOT NULL DEFAULT 0.0
+);
+
+CREATE INDEX IF NOT EXISTS idx_mcp_calls_timestamp ON mcp_tool_calls(timestamp);
+CREATE INDEX IF NOT EXISTS idx_mcp_calls_tool      ON mcp_tool_calls(tool);
 """
 
 
@@ -120,6 +134,8 @@ _MIGRATIONS: list[tuple[str, str]] = [
     ("ai_category",      "TEXT NOT NULL DEFAULT 'unknown'"),
     ("tag_confidence",   "REAL"),
     ("tag_needs_review", "INTEGER NOT NULL DEFAULT 0"),
+    ("cache_read_tokens",     "INTEGER NOT NULL DEFAULT 0"),
+    ("cache_creation_tokens", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
@@ -159,10 +175,11 @@ def insert_entry(entry: SpendEntry) -> None:
         INSERT OR IGNORE INTO spend_entries
             (id, timestamp, provider, model, workload_class,
              input_tokens, output_tokens, reasoning_tokens,
+             cache_read_tokens, cache_creation_tokens,
              cost_usd, is_local, team, feature, notes, source,
              user_id, project, ai_category,
              tag_confidence, tag_needs_review)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """
     with _conn() as con:
         con.execute(sql, (
@@ -174,6 +191,8 @@ def insert_entry(entry: SpendEntry) -> None:
             entry.input_tokens,
             entry.output_tokens,
             entry.reasoning_tokens,
+            entry.cache_read_tokens,
+            entry.cache_creation_tokens,
             entry.cost_usd,
             int(entry.is_local),
             entry.team,
@@ -194,15 +213,17 @@ def insert_entries_bulk(entries: list[SpendEntry]) -> int:
         INSERT OR IGNORE INTO spend_entries
             (id, timestamp, provider, model, workload_class,
              input_tokens, output_tokens, reasoning_tokens,
+             cache_read_tokens, cache_creation_tokens,
              cost_usd, is_local, team, feature, notes, source,
              user_id, project, ai_category,
              tag_confidence, tag_needs_review)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """
     rows = [
         (e.id, e.timestamp.isoformat(), e.provider.value, e.model,
          e.workload_class.value, e.input_tokens, e.output_tokens,
-         e.reasoning_tokens, e.cost_usd, int(e.is_local),
+         e.reasoning_tokens, e.cache_read_tokens, e.cache_creation_tokens,
+         e.cost_usd, int(e.is_local),
          e.team, e.feature, e.notes, e.source.value,
          e.user_id, e.project, e.ai_category.value,
          e.tag_confidence, int(e.tag_needs_review))
@@ -388,3 +409,65 @@ def set_poll_cursor(
             since_date.isoformat(),
             until_date.isoformat(),
         ))
+
+
+# ---------------------------------------------------------------------------
+# MCP tool calls — track the input-token burn MCP responses feed back into
+# the calling agent's own context (separate from provider spend_entries).
+# ---------------------------------------------------------------------------
+
+def insert_mcp_call(
+    tool: str,
+    *,
+    request_tokens: int,
+    response_tokens: int,
+    estimated_usd: float,
+    timestamp: datetime | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Log one MCP tool call.
+
+    `conn`: an already-open connection to reuse (e.g. mcp_server.py holds one
+    open for its process lifetime rather than paying a fresh connect/pragma/
+    close round trip on every tool call). Defaults to the usual short-lived
+    per-call connection used everywhere else in this module.
+    """
+    sql = """INSERT INTO mcp_tool_calls
+                 (timestamp, tool, request_tokens, response_tokens, estimated_usd)
+             VALUES (?,?,?,?,?)"""
+    params = (
+        (timestamp or datetime.utcnow()).isoformat(),
+        tool,
+        int(request_tokens),
+        int(response_tokens),
+        float(estimated_usd),
+    )
+    if conn is not None:
+        conn.execute(sql, params)
+        conn.commit()
+        return
+    with _conn() as con:
+        con.execute(sql, params)
+
+
+def fetch_mcp_calls(since: datetime | None = None, limit: int = 10_000) -> list[dict]:
+    clauses = []
+    params: list = []
+    if since:
+        clauses.append("timestamp >= ?")
+        params.append(since.isoformat())
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(int(limit))
+    # Order by id (insertion order) rather than the timestamp string — two
+    # calls in the same test/process can share a timestamp at this
+    # resolution, but id is always strictly increasing.
+    sql = f"SELECT * FROM mcp_tool_calls {where} ORDER BY id DESC LIMIT ?"  # noqa: S608
+
+    with _conn() as con:
+        rows = con.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def clear_mcp_calls() -> None:
+    with _conn() as con:
+        con.execute("DELETE FROM mcp_tool_calls")

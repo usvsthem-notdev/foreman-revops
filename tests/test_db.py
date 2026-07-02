@@ -113,6 +113,70 @@ class TestInsertFetch:
         clear_all_entries()
         assert len(fetch_entries()) == 0
 
+    def test_cache_tokens_round_trip(self):
+        e = _entry(cache_read_tokens=800, cache_creation_tokens=50)
+        insert_entry(e)
+        rows = fetch_entries()
+        assert rows[0]["cache_read_tokens"] == 800
+        assert rows[0]["cache_creation_tokens"] == 50
+
+    def test_cache_tokens_default_to_zero(self):
+        insert_entry(_entry())
+        rows = fetch_entries()
+        assert rows[0]["cache_read_tokens"] == 0
+        assert rows[0]["cache_creation_tokens"] == 0
+
+    def test_cache_tokens_exceeding_input_tokens_rejected(self):
+        # cache_read/cache_creation are documented as a subset of
+        # input_tokens, not additive — constructing a SpendEntry that
+        # violates this must fail loudly, not silently corrupt downstream
+        # cost attribution.
+        with pytest.raises(ValueError, match="subset of input"):
+            _entry(input_tokens=100, cache_read_tokens=50000, cache_creation_tokens=0)
+
+    def test_cache_tokens_exactly_equal_to_input_tokens_allowed(self):
+        e = _entry(input_tokens=1000, cache_read_tokens=900, cache_creation_tokens=100)
+        assert e.cache_read_tokens + e.cache_creation_tokens == e.input_tokens
+
+
+class TestMigration:
+    def test_adds_cache_columns_to_pre_existing_table(self):
+        import sqlite3
+
+        from src.db import get_db_path
+
+        # Resolve the path the same way db.py itself does — os.environ can
+        # be mutated by other test modules during collection, so a
+        # module-level constant captured at import time isn't reliable here.
+        db_path = str(get_db_path())
+
+        con = sqlite3.connect(db_path)
+        con.execute("DROP TABLE IF EXISTS spend_entries")
+        con.execute("""
+            CREATE TABLE spend_entries (
+                id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, provider TEXT NOT NULL,
+                model TEXT NOT NULL, workload_class TEXT NOT NULL DEFAULT 'unknown',
+                input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL DEFAULT 0.0,
+                is_local INTEGER NOT NULL DEFAULT 0, team TEXT, feature TEXT, notes TEXT,
+                source TEXT NOT NULL DEFAULT 'manual'
+            )
+        """)
+        con.commit()
+        con.close()
+
+        init_db()
+
+        con = sqlite3.connect(db_path)
+        cols = {r[1] for r in con.execute("PRAGMA table_info(spend_entries)")}
+        con.close()
+        assert "cache_read_tokens" in cols
+        assert "cache_creation_tokens" in cols
+
+        # And the table is immediately usable with the new columns.
+        insert_entry(_entry(cache_read_tokens=42))
+        assert fetch_entries()[0]["cache_read_tokens"] == 42
+
 
 class TestBudgets:
     def _budget(self, name: str = "test") -> Budget:

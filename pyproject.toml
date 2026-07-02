@@ -33,7 +33,7 @@ testpaths = ["tests"]
 addopts = "-v --tb=short"
 
 [tool.coverage.run]
-source = ["src"]
+source = ["src", "foreman_optimizer"]
 omit = [
     "tests/*",
     "src/ui/*",      # Streamlit views require a running server — not unit-testable

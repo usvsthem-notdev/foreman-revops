@@ -42,6 +42,17 @@ def _render_single_form() -> None:
         output_tok   = c6.number_input("Output tokens",   min_value=0, step=100)
         reasoning_tok= c7.number_input("Reasoning tokens",min_value=0, step=100)
 
+        with st.expander("Prompt/prefix cache tokens (optional)"):
+            c_cache1, c_cache2 = st.columns(2)
+            cache_read_tok = c_cache1.number_input(
+                "Cache read tokens", min_value=0, step=100,
+                help="Subset of input tokens served from a cache hit — not additive.",
+            )
+            cache_creation_tok = c_cache2.number_input(
+                "Cache creation tokens", min_value=0, step=100,
+                help="Subset of input tokens written to cache (Anthropic-only concept).",
+            )
+
         c8, c9 = st.columns(2)
         cost = c8.number_input("Cost (USD)", min_value=0.0, step=0.0001, format="%.6f")
         is_local = c9.checkbox("Absorbed locally (ran on local model)")
@@ -75,6 +86,8 @@ def _render_single_form() -> None:
             input_tokens=int(input_tok),
             output_tokens=int(output_tok),
             reasoning_tokens=int(reasoning_tok),
+            cache_read_tokens=int(cache_read_tok),
+            cache_creation_tokens=int(cache_creation_tok),
             cost_usd=float(cost),
             is_local=inferred_local,
             team=team.strip() or None,

@@ -49,6 +49,12 @@ class TestAnthropicParser:
         # input(10000) + cache_read(500) + cache_write(100) = 10600
         assert opus_entry.input_tokens == 10600
 
+    def test_cache_tokens_also_tracked_in_their_own_fields(self):
+        bill = parse_anthropic_csv(ANTHROPIC_CSV)
+        opus_entry = next(e for e in bill.entries if "opus" in e.model)
+        assert opus_entry.cache_read_tokens == 500
+        assert opus_entry.cache_creation_tokens == 100
+
     def test_empty_csv_returns_empty_bill(self):
         bill = parse_anthropic_csv(EMPTY_CSV)
         assert len(bill.entries) == 0
@@ -79,6 +85,17 @@ class TestOpenAIParser:
         bill = parse_openai_csv(OPENAI_CSV)
         embed_entry = next(e for e in bill.entries if "embed" in e.model)
         assert embed_entry.workload_class == WorkloadClass.rag
+
+    def test_cached_tokens_column_populates_cache_read_field(self):
+        csv_with_cache = (
+            b"date,model,input_tokens,output_tokens,cached_context_tokens_input,cost\n"
+            b"2026-06-01,gpt-4o,8000,1500,3000,0.0235\n"
+        )
+        bill = parse_openai_csv(csv_with_cache)
+        assert len(bill.entries) == 1
+        assert bill.entries[0].cache_read_tokens == 3000
+        # Cached tokens are a subset of input, not additive.
+        assert bill.entries[0].input_tokens == 8000
 
 
 class TestAutoDetect:

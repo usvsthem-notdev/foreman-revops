@@ -74,6 +74,9 @@ def seed_if_empty() -> bool:
                 minutes=rng.randint(0, 59),
             )
 
+            cache_read_tok = 0
+            cache_creation_tok = 0
+
             if cls == WorkloadClass.extract:
                 in_tok  = rng.randint(500,    4_000)
                 out_tok = rng.randint(100,      500)
@@ -82,6 +85,11 @@ def seed_if_empty() -> bool:
                 in_tok  = rng.randint(2_000, 12_000)
                 out_tok = rng.randint(200,   1_500)
                 r_tok   = 0
+                # Repeated retrieval context (same doc chunks reused across
+                # queries) makes RAG a realistic prompt-caching candidate.
+                if "claude" in model and not is_local:
+                    cache_read_tok = rng.randint(int(in_tok * 0.3), int(in_tok * 0.7))
+                    cache_creation_tok = rng.randint(0, int(in_tok * 0.05))
             elif cls == WorkloadClass.reason:
                 in_tok  = rng.randint(5_000, 30_000)
                 out_tok = rng.randint(500,   3_000)
@@ -90,6 +98,11 @@ def seed_if_empty() -> bool:
                 in_tok  = rng.randint(10_000, 80_000)
                 out_tok = rng.randint(1_000,  8_000)
                 r_tok   = rng.randint(5_000,  40_000) if "sonnet" in model else 0
+                # Agent loops re-send a large, mostly-static system prompt +
+                # tool definitions on every step — a strong caching fit.
+                if "claude" in model and not is_local:
+                    cache_read_tok = rng.randint(int(in_tok * 0.4), int(in_tok * 0.85))
+                    cache_creation_tok = rng.randint(0, int(in_tok * 0.05))
             else:
                 in_tok  = rng.randint(3_000, 20_000)
                 out_tok = rng.randint(500,   4_000)
@@ -110,6 +123,8 @@ def seed_if_empty() -> bool:
                 input_tokens=in_tok,
                 output_tokens=out_tok,
                 reasoning_tokens=r_tok,
+                cache_read_tokens=cache_read_tok,
+                cache_creation_tokens=cache_creation_tok,
                 cost_usd=round(cost, 8),
                 is_local=is_local,
                 team=rng.choice(_TEAMS),

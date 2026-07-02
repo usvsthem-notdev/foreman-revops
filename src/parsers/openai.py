@@ -137,6 +137,7 @@ def _parse_row(
     input_tok = safe_int(get("input_tokens"))
     output_tok = safe_int(get("output_tokens"))
     reasoning_tok = safe_int(get("reasoning_tokens"))
+    cached_tok = safe_int(get("cached_tokens"))
     cost_raw = get("cost_usd")
 
     # OpenAI exports cost as negative credits in some formats
@@ -155,6 +156,7 @@ def _parse_row(
         input_tokens=input_tok,   # cached tokens are a subset, not additive
         output_tokens=output_tok,
         reasoning_tokens=reasoning_tok,
+        cache_read_tokens=cached_tok,
         cost_usd=cost,
         is_local=infer_is_local(model),
         feature=feature,
@@ -163,7 +165,8 @@ def _parse_row(
 
 
 # Approximate OpenAI pricing ($/M tokens) — June 2026
-_OPENAI_PRICES: dict[str, tuple[float, float]] = {
+# Public: also consumed by src.analytics.pricing for burn-map cost attribution.
+OPENAI_PRICES: dict[str, tuple[float, float]] = {
     "o3":           (10.0, 40.0),
     "o1":           (15.0, 60.0),
     "o1-mini":      (3.0,  12.0),
@@ -177,7 +180,7 @@ _OPENAI_PRICES: dict[str, tuple[float, float]] = {
 
 def _estimate_openai_cost(model: str, input_tok: int, output_tok: int, reasoning_tok: int) -> float:
     model_lower = model.lower()
-    for key, (in_price, out_price) in _OPENAI_PRICES.items():
+    for key, (in_price, out_price) in OPENAI_PRICES.items():
         if key in model_lower:
             return (input_tok * in_price + (output_tok + reasoning_tok) * out_price) / 1_000_000
     return (input_tok * 2.5 + output_tok * 10.0) / 1_000_000

@@ -139,9 +139,17 @@ def _to_entry(item: dict[str, Any], day: date) -> SpendEntry | None:
 
     input_tok  = int(item.get("n_context_tokens_total",   0) or 0)
     output_tok = int(item.get("n_generated_tokens_total", 0) or 0)
-    # n_cached_context_tokens_total is a subset of input already counted;
-    # store as reasoning_tokens to surface cache-hit volume in the UI.
+    # n_cached_context_tokens_total is a subset of input already counted —
+    # a real prompt-cache hit count, tracked in its own field (not reasoning).
     cached_tok = int(item.get("n_cached_context_tokens_total", 0) or 0)
+    # This bucketed usage endpoint doesn't expose a verified reasoning-token
+    # field (unlike n_context_tokens_total/n_generated_tokens_total/
+    # n_cached_context_tokens_total, which are documented). Guessing a field
+    # name here would silently read as 0 forever if wrong, indistinguishable
+    # from "no reasoning tokens used" — the same failure mode this fix
+    # otherwise eliminates. Leave it 0 and honest until a verified field is
+    # confirmed, same treatment as Anthropic's poller.
+    reasoning_tok = 0
 
     if input_tok == 0 and output_tok == 0:
         return None
@@ -160,7 +168,8 @@ def _to_entry(item: dict[str, Any], day: date) -> SpendEntry | None:
         workload_class=infer_workload_class(model),
         input_tokens=input_tok,
         output_tokens=output_tok,
-        reasoning_tokens=cached_tok,
+        reasoning_tokens=reasoning_tok,
+        cache_read_tokens=cached_tok,
         cost_usd=0.0,   # usage endpoint does not return per-model cost
         is_local=infer_is_local(model),
         source=EntrySource.api,

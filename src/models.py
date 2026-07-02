@@ -67,6 +67,12 @@ class SpendEntry(BaseModel):
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     reasoning_tokens: int = Field(ge=0, default=0)
+    # Prompt/prefix cache tokens — a SUBSET of input_tokens, not additive.
+    # cache_read: served from a cache hit, priced far below fresh input.
+    # cache_creation: written to cache for future reuse (Anthropic-only
+    # concept; always 0 for providers with no cache-write billing line).
+    cache_read_tokens: int = Field(ge=0, default=0)
+    cache_creation_tokens: int = Field(ge=0, default=0)
     cost_usd: float = Field(ge=0.0)
     is_local: bool = False  # sage = True (absorbed), clay = False (frontier)
     team: str | None = Field(default=None, max_length=64)
@@ -92,6 +98,15 @@ class SpendEntry(BaseModel):
         total = self.input_tokens + self.output_tokens + self.reasoning_tokens
         if total == 0 and self.cost_usd > 0:
             pass  # allow cost-only entries (e.g., from invoices)
+        return self
+
+    @model_validator(mode="after")
+    def cache_tokens_are_a_subset_of_input(self) -> SpendEntry:
+        if self.cache_read_tokens + self.cache_creation_tokens > self.input_tokens:
+            raise ValueError(
+                "cache_read_tokens + cache_creation_tokens must not exceed "
+                "input_tokens — cache tokens are a subset of input, not additive"
+            )
         return self
 
 

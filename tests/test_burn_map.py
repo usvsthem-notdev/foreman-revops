@@ -14,6 +14,7 @@ from src.analytics.burn_map import (
     burn_by_model,
     burn_by_provider,
     burn_rate_projection,
+    cost_by_axis,
     cumulative_burn,
     daily_burn,
     key_metrics,
@@ -31,6 +32,8 @@ def _row(
     input_tokens: int = 1000,
     output_tokens: int = 200,
     reasoning_tokens: int = 0,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
     cost_usd: float = 1.0,
     is_local: bool = False,
     team: str | None = "eng",
@@ -45,6 +48,8 @@ def _row(
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "reasoning_tokens": reasoning_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
         "cost_usd": cost_usd,
         "is_local": is_local,
         "team": team,
@@ -213,6 +218,61 @@ class TestCumulativeBurn:
         result = cumulative_burn(df)
         assert "cumulative_usd" in result.columns
         assert result["cumulative_usd"].iloc[-1] == pytest.approx(3.0)
+
+
+# ── cost_by_axis ─────────────────────────────────────────────────────────────
+
+class TestCostByAxis:
+    def test_empty_returns_zeros(self):
+        assert cost_by_axis(_make_df()) == (0.0, 0.0)
+
+    def test_matches_row_wise_split_cost_reference(self):
+        from src.analytics.pricing import split_cost
+
+        rows = [
+            _row(model="claude-opus-4", cost_usd=4.0, input_tokens=1000, output_tokens=200),
+            _row(model="gpt-4o", cost_usd=0.0, input_tokens=500, output_tokens=100),  # zero cost
+            _row(model="claude-haiku", cost_usd=2.0, input_tokens=0, output_tokens=0),  # 0 weight
+            _row(model="unknown-model-xyz", cost_usd=1.0, input_tokens=300, output_tokens=50),
+            _row(model="claude-sonnet-4", cost_usd=3.0, input_tokens=10_000, output_tokens=500,
+                 cache_read_tokens=8_000, cache_creation_tokens=500),
+        ]
+        df = _make_df(*rows)
+
+        expected_in = expected_out = 0.0
+        for r in rows:
+            i, o = split_cost(r["cost_usd"], r["input_tokens"], r["output_tokens"],
+                               r["reasoning_tokens"], r["model"],
+                               cache_read_tokens=r["cache_read_tokens"],
+                               cache_creation_tokens=r["cache_creation_tokens"])
+            expected_in += i
+            expected_out += o
+
+        input_usd, output_usd = cost_by_axis(df)
+        assert input_usd == pytest.approx(expected_in)
+        assert output_usd == pytest.approx(expected_out)
+
+    def test_sums_back_to_total_cost(self):
+        df = _make_df(
+            _row(model="claude-opus-4", cost_usd=4.0, input_tokens=1000, output_tokens=200),
+            _row(model="gpt-4o", cost_usd=3.0, input_tokens=800, output_tokens=150),
+        )
+        input_usd, output_usd = cost_by_axis(df)
+        assert input_usd + output_usd == pytest.approx(7.0)
+
+    def test_cache_tokens_exceeding_input_are_capped(self):
+        # Rows written before SpendEntry's subset-invariant validator existed
+        # could have cache_read_tokens > input_tokens — must not overweight
+        # the input axis relative to a sane, capped equivalent.
+        overshoot_df = _make_df(
+            _row(model="claude-opus-4", cost_usd=10.0, input_tokens=100,
+                 output_tokens=1000, cache_read_tokens=100_000),
+        )
+        capped_df = _make_df(
+            _row(model="claude-opus-4", cost_usd=10.0, input_tokens=100,
+                 output_tokens=1000, cache_read_tokens=100),
+        )
+        assert cost_by_axis(overshoot_df) == pytest.approx(cost_by_axis(capped_df))
 
 
 # ── key_metrics ───────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ Open-source LLM spend tracker. Upload billing CSVs or wire up live API keys — 
 
 ## What it does
 
-**Burn Map** — stacked bar chart split between frontier spend and locally-absorbed cost. Breaks down by workload class (extract · rag · reason · agents · coding), provider, and model. Shows daily burn with a 30-day projection and budget progress bars.
+**Burn Map** — stacked bar chart split between frontier spend and locally-absorbed cost. Breaks down by workload class (extract · rag · reason · agents · coding), provider, and model. Shows daily burn with a 30-day projection and budget progress bars, plus an input-vs-output cost split (output is priced several times higher per token, so the token-count split and the dollar split usually don't match).
 
 **Bill Analyzer** — drop in a CSV from Anthropic, OpenAI, Cursor, or Gemini. The parser auto-detects the provider from headers, handles format variants, and estimates how much of the spend could move to a local model.
 
@@ -28,7 +28,9 @@ Open-source LLM spend tracker. Upload billing CSVs or wire up live API keys — 
 
 **Spend Intelligence** — detect → propose → guardrails loop. Flags concentration risk, reasoning token waste, spend drift, and untagged entries. Generates routing proposals with estimated savings and a quality-floor guardrail note.
 
-**Cursor MCP Server** — exposes 8 analytics tools over stdio so Cursor can query spend data directly from the editor. See setup below.
+**Prompt Optimizer** — paste a prompt you're about to send and get a free, local, deterministic (Tier-0) rewrite before it ever reaches an LLM: filler stripped, duplicate clauses removed, an output-shaping directive added, all priced against Foreman's real per-model rates. Repeated prompt templates are fingerprinted and tracked so recurring ones surface as "hot" — candidates for a heavier Tier-1 rewrite or a cached prefix. Built on the vendored, stdlib-only [`foreman_optimizer`](foreman_optimizer/) package.
+
+**Cursor MCP Server** — exposes 8 analytics tools over stdio so Cursor can query spend data directly from the editor. Every tool call is itself logged: MCP responses get read back into the calling agent's own context as input tokens on its next turn, which is real burn that's invisible to provider billing — the burn map's "MCP Tool-Call Input Burn" section tracks it using the same free token-estimation heuristic as the Prompt Optimizer. See setup below.
 
 ---
 
@@ -94,7 +96,7 @@ Add to `~/.cursor/mcp.json`:
 }
 ```
 
-Available tools in Cursor:
+Available tools in Cursor (all take a `days` window where relevant, default 30):
 
 | Tool | What it returns |
 |---|---|
@@ -103,9 +105,15 @@ Available tools in Cursor:
 | `get_burn_by_model` | Cost breakdown per model |
 | `get_burn_by_class` | Cost breakdown per workload class |
 | `get_daily_burn` | Day-by-day spend for the last N days |
-| `get_projection` | 30-day spend forecast from recent average |
+| `get_projection` | Spend forecast from recent average |
 | `get_budget_status` | Each budget's used/remaining/over-threshold status |
-| `get_top_spenders` | Models or teams ranked by cost |
+| `get_top_spenders` | Models or teams ranked by cost (`by="model"` or `by="team"`) |
+
+Every call is logged to a local `mcp_tool_calls` table — not provider spend,
+but an estimate (via the same free heuristic `foreman_optimizer` uses) of the
+input tokens the tool's JSON response adds to the calling agent's next turn.
+Set `FOREMAN_MCP_REFERENCE_MODEL` (default `claude-sonnet-4`) to price that
+estimate against a different model's input rate.
 
 ---
 

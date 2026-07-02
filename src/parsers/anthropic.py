@@ -166,6 +166,8 @@ def _parse_row(
         input_tokens=effective_input,
         output_tokens=output_tok,
         reasoning_tokens=0,
+        cache_read_tokens=cache_read,
+        cache_creation_tokens=cache_write,
         cost_usd=cost,
         is_local=infer_is_local(model),
         feature=feature,
@@ -174,7 +176,8 @@ def _parse_row(
 
 
 # Approximate Anthropic pricing ($/M tokens) — June 2026
-_ANTHROPIC_PRICES: dict[str, tuple[float, float]] = {
+# Public: also consumed by src.analytics.pricing for burn-map cost attribution.
+ANTHROPIC_PRICES: dict[str, tuple[float, float]] = {
     "claude-opus-4":     (15.0, 75.0),
     "claude-opus":       (15.0, 75.0),
     "claude-sonnet-4":   (3.0,  15.0),
@@ -188,7 +191,7 @@ _ANTHROPIC_PRICES: dict[str, tuple[float, float]] = {
 
 def _estimate_anthropic_cost(model: str, input_tok: int, output_tok: int) -> float:
     model_lower = model.lower()
-    for key, (in_price, out_price) in _ANTHROPIC_PRICES.items():
+    for key, (in_price, out_price) in ANTHROPIC_PRICES.items():
         if key in model_lower:
             return (input_tok * in_price + output_tok * out_price) / 1_000_000
     # Default fallback — mid-tier price

@@ -190,6 +190,23 @@ class TestAnthropicEntryParsing:
         assert entry is not None
         assert entry.workload_class.value == "extract"
 
+    def test_cache_tokens_stored_in_own_fields_not_reasoning(self):
+        item = self._item(cache_read_tokens=3000, cache_creation_tokens=400)
+        entry = anthropic_to_entry(item)
+        assert entry is not None
+        assert entry.cache_read_tokens == 3000
+        assert entry.cache_creation_tokens == 400
+        assert entry.reasoning_tokens == 0  # Anthropic has no such API field
+
+    def test_cache_tokens_folded_into_input_tokens(self):
+        # The usage API reports input_tokens as fresh-only — cache tokens
+        # must be folded in so cache_read/creation stay a subset of input,
+        # not additive on top of it (this app's convention everywhere else).
+        item = self._item(input_tokens=10000, cache_read_tokens=3000, cache_creation_tokens=400)
+        entry = anthropic_to_entry(item)
+        assert entry is not None
+        assert entry.input_tokens == 13400
+
 
 class TestParseTs:
     def test_unix_int(self):
@@ -237,11 +254,23 @@ class TestOpenAIEntryParsing:
         item = self._item(n_context_tokens_total=0, n_generated_tokens_total=0)
         assert openai_to_entry(item, date.today()) is None
 
-    def test_cached_tokens_stored_as_reasoning(self):
+    def test_cached_tokens_stored_in_cache_read_field(self):
         item = self._item(n_cached_context_tokens_total=500)
         entry = openai_to_entry(item, date(2026, 6, 1))
         assert entry is not None
-        assert entry.reasoning_tokens == 500
+        assert entry.cache_read_tokens == 500
+        assert entry.reasoning_tokens == 0  # not conflated with cache hits
+
+    def test_reasoning_tokens_stay_honestly_zero_not_guessed(self):
+        # This bucketed usage endpoint has no verified reasoning-token field —
+        # guessing a field name risks a silent, permanent 0 if wrong (the
+        # same failure mode being fixed elsewhere). Confirm we don't invent
+        # one, even if an item happens to carry an unrelated extra key.
+        item = self._item(n_cached_context_tokens_total=500, some_other_field=750)
+        entry = openai_to_entry(item, date(2026, 6, 1))
+        assert entry is not None
+        assert entry.reasoning_tokens == 0
+        assert entry.cache_read_tokens == 500
 
     def test_fallback_to_day_when_no_timestamp(self):
         item = {
