@@ -15,7 +15,7 @@ from foreman_optimizer import (
     parse,
     run_tier0,
 )
-from foreman_optimizer.fingerprint import fingerprint, skeleton
+from foreman_optimizer.fingerprint import SQLiteStore, fingerprint, skeleton
 from foreman_optimizer.rules import rule_strip_filler
 
 
@@ -110,3 +110,31 @@ class TestSavingsAccounting:
         assert len(input_legs) == 1 and input_legs[0].tokens_saved < 0
         assert len(output_legs) == 1 and output_legs[0].tokens_saved > 0
         assert axes  # sanity: both legs present
+
+
+class TestSQLiteStoreThreadSafety:
+    def test_usable_from_a_different_thread_than_it_was_created_on(self, tmp_path):
+        # Streamlit (via st.cache_resource) can hand one cached instance to
+        # whichever worker thread serves a later rerun — sqlite3 connections
+        # default to single-thread-only and raise
+        # "SQLite objects created in a thread can only be used in that same
+        # thread" the first time that happens. Regression test for that.
+        import threading
+
+        store = SQLiteStore(str(tmp_path / "templates.db"))
+        promoter = FrequencyPromoter(store)
+        promoter.observe("some prompt", tokens=10)
+
+        errors = []
+
+        def other_thread_call():
+            try:
+                promoter.observe("some prompt", tokens=10)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        t = threading.Thread(target=other_thread_call)
+        t.start()
+        t.join()
+
+        assert not errors, f"cross-thread access raised: {errors}"

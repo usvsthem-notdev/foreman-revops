@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Optional, Protocol
@@ -127,35 +128,50 @@ class InMemoryStore:
 
 
 class SQLiteStore:
-    """Local-first persistence. Point it at Foreman's existing db if desired."""
+    """Local-first persistence. Point it at Foreman's existing db if desired.
+
+    Callers (e.g. Foreman's Streamlit UI) may cache one instance for the life
+    of the process and hand it to whichever worker thread serves the next
+    request — sqlite3 connections default to single-thread-only, so this
+    would raise "SQLite objects created in a thread can only be used in that
+    same thread" the first time a different thread calls in. Allow
+    cross-thread use and serialize actual access with a lock (a bare
+    check_same_thread=False doesn't make concurrent access from multiple
+    threads safe on its own).
+    """
     def __init__(self, path: str = "foreman_templates.db"):
-        self.conn = sqlite3.connect(path)
-        self.conn.execute(
-            """CREATE TABLE IF NOT EXISTS templates (
-                   fp TEXT PRIMARY KEY, skeleton TEXT, count INTEGER,
-                   total_tokens INTEGER, saved_tokens INTEGER, promoted INTEGER,
-                   optimized TEXT, first_seen REAL, last_seen REAL)"""
-        )
-        self.conn.commit()
+        self.conn = sqlite3.connect(path, check_same_thread=False)
+        self._lock = threading.Lock()
+        with self._lock:
+            self.conn.execute(
+                """CREATE TABLE IF NOT EXISTS templates (
+                       fp TEXT PRIMARY KEY, skeleton TEXT, count INTEGER,
+                       total_tokens INTEGER, saved_tokens INTEGER, promoted INTEGER,
+                       optimized TEXT, first_seen REAL, last_seen REAL)"""
+            )
+            self.conn.commit()
 
     def get(self, fp: str) -> Optional[TemplateRecord]:
-        row = self.conn.execute("SELECT * FROM templates WHERE fp=?", (fp,)).fetchone()
+        with self._lock:
+            row = self.conn.execute("SELECT * FROM templates WHERE fp=?", (fp,)).fetchone()
         if not row:
             return None
         return TemplateRecord(row[0], row[1], row[2], row[3], row[4], bool(row[5]), row[6], row[7], row[8])
 
     def put(self, rec: TemplateRecord) -> None:
-        self.conn.execute(
-            "REPLACE INTO templates VALUES (?,?,?,?,?,?,?,?,?)",
-            (rec.fp, rec.skeleton, rec.count, rec.total_tokens, rec.saved_tokens,
-             int(rec.promoted), rec.optimized, rec.first_seen, rec.last_seen),
-        )
-        self.conn.commit()
+        with self._lock:
+            self.conn.execute(
+                "REPLACE INTO templates VALUES (?,?,?,?,?,?,?,?,?)",
+                (rec.fp, rec.skeleton, rec.count, rec.total_tokens, rec.saved_tokens,
+                 int(rec.promoted), rec.optimized, rec.first_seen, rec.last_seen),
+            )
+            self.conn.commit()
 
     def top(self, n: int) -> list[TemplateRecord]:
-        rows = self.conn.execute(
-            "SELECT * FROM templates ORDER BY total_tokens DESC LIMIT ?", (n,)
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT * FROM templates ORDER BY total_tokens DESC LIMIT ?", (n,)
+            ).fetchall()
         return [TemplateRecord(r[0], r[1], r[2], r[3], r[4], bool(r[5]), r[6], r[7], r[8]) for r in rows]
 
 
