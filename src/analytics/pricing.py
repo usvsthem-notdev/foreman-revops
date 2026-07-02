@@ -21,9 +21,24 @@ _SUPPLEMENTAL_PRICES: dict[str, tuple[float, float]] = {
     "gpt-4o-mini": (0.15, 0.6),
 }
 
+# Approximate Google/Gemini pricing ($/M tokens) — July 2026. No dedicated
+# Gemini bill parser yet, so the table lives here; Gemini rows arrive via
+# live polling and the generic parser. Gemini 3 Pro rates are the ≤200K
+# context tier (long-context requests bill higher).
+GOOGLE_PRICES: dict[str, tuple[float, float]] = {
+    "gemini-3.5-flash": (1.5,  9.0),
+    "gemini-3-pro":     (2.0,  12.0),
+    "gemini-3-flash":   (0.5,  3.0),
+    # Prior generation — historical data
+    "gemini-2.5-pro":   (1.25, 10.0),
+    "gemini-2.5-flash": (0.3,  2.5),
+    "gemini-2.0-flash": (0.1,  0.4),
+}
+
 _ALL_PRICES: dict[str, tuple[float, float]] = {
     **ANTHROPIC_PRICES,
     **OPENAI_PRICES,
+    **GOOGLE_PRICES,
     **_SUPPLEMENTAL_PRICES,
 }
 
@@ -54,24 +69,39 @@ def price_for_model(model: str) -> tuple[float, float]:
 #   Anthropic: cache read  ~10% of input price (90% discount)
 #              cache write ~125% of input price (a premium — you pay extra
 #              to populate the cache, in exchange for future cheap reads)
-#   OpenAI:    cache read  ~50% of input price; caching is automatic and has
-#              no separate billed "write" line — the first (uncached) hit
-#              costs the SAME as normal input, i.e. a 1.0 multiplier, not a
-#              discount and not free.
+#   OpenAI:    GPT-5-era models discount cached input 90% (0.1x); the older
+#              gpt-4o generation discounted 50% (0.5x). Caching is automatic
+#              with no separate billed "write" line — the first (uncached)
+#              hit costs the SAME as normal input, i.e. a 1.0 multiplier,
+#              not a discount and not free.
+#   Google:    implicit caching bills cached Gemini tokens at ~25% of input
+#              price (75% discount); no billed write line. (Explicit context
+#              caching adds hourly storage — not modeled here.)
 _ANTHROPIC_CACHE_MULT: tuple[float, float] = (0.1, 1.25)
-_OPENAI_CACHE_MULT: tuple[float, float] = (0.5, 1.0)
-# No discount/premium at all — used for any model outside the two tables
-# above (local models, Gemini, future providers) so an entry with cache
-# tokens against an unrecognized model doesn't silently inherit someone
-# else's cache economics.
+_OPENAI_CACHE_MULT: tuple[float, float] = (0.1, 1.0)
+_OPENAI_LEGACY_CACHE_MULT: tuple[float, float] = (0.5, 1.0)
+_GOOGLE_CACHE_MULT: tuple[float, float] = (0.25, 1.0)
+# No discount/premium at all — used for any model outside the tables above
+# (local models, future providers) so an entry with cache tokens against an
+# unrecognized model doesn't silently inherit someone else's cache economics.
 _NEUTRAL_CACHE_MULT: tuple[float, float] = (1.0, 1.0)
+
+_OPENAI_CURRENT_GEN_PREFIXES = ("gpt-5",)
 
 # Keyed the same way as _ALL_PRICES, resolved through the same _LOOKUP_ORDER
 # substring match — one mechanism for both price and cache-multiplier lookup.
 _CACHE_MULT_BY_KEY: dict[str, tuple[float, float]] = {
     **{k: _ANTHROPIC_CACHE_MULT for k in ANTHROPIC_PRICES},
-    **{k: _OPENAI_CACHE_MULT for k in OPENAI_PRICES},
-    **{k: _OPENAI_CACHE_MULT for k in _SUPPLEMENTAL_PRICES},
+    **{
+        k: (
+            _OPENAI_CACHE_MULT
+            if k.startswith(_OPENAI_CURRENT_GEN_PREFIXES)
+            else _OPENAI_LEGACY_CACHE_MULT
+        )
+        for k in OPENAI_PRICES
+    },
+    **{k: _GOOGLE_CACHE_MULT for k in GOOGLE_PRICES},
+    **{k: _OPENAI_LEGACY_CACHE_MULT for k in _SUPPLEMENTAL_PRICES},
 }
 
 

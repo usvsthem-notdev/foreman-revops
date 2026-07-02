@@ -26,23 +26,24 @@ _SEED = 42
 
 _TEMPLATES = [
     # (workload_class, provider, model, is_local, in_rate_per_1k, out_rate_per_1k)
-    (WorkloadClass.extract, Provider.anthropic, "claude-haiku-4-5",        False, 0.00025, 0.00125),
+    # Rates mirror the July 2026 tables in src/parsers + src/analytics/pricing.
+    (WorkloadClass.extract, Provider.anthropic, "claude-haiku-4-5",        False, 0.001,   0.005),
     (WorkloadClass.extract, Provider.anthropic, "bge-large-local",         True,  0.0,     0.0),
-    (WorkloadClass.rag,     Provider.anthropic, "claude-haiku-4-5",        False, 0.00025, 0.00125),
+    (WorkloadClass.rag,     Provider.anthropic, "claude-haiku-4-5",        False, 0.001,   0.005),
     (WorkloadClass.rag,     Provider.anthropic, "bge-large-local",         True,  0.0,     0.0),
     (WorkloadClass.rag,     Provider.openai,    "text-embedding-3-small",  False, 0.0001,  0.0),
-    (WorkloadClass.reason,  Provider.anthropic, "claude-opus-4",           False, 0.015,   0.075),
-    (WorkloadClass.reason,  Provider.anthropic, "claude-sonnet-4-5",       False, 0.003,   0.015),
-    (WorkloadClass.reason,  Provider.openai,    "o1-mini",                 False, 0.003,   0.012),
-    (WorkloadClass.reason,  Provider.gemini,    "gemini-2.5-pro",          False, 0.00125, 0.01),
-    (WorkloadClass.agents,  Provider.anthropic, "claude-sonnet-4-5",       False, 0.003,   0.015),
-    (WorkloadClass.agents,  Provider.openai,    "gpt-4o",                  False, 0.0025,  0.01),
+    (WorkloadClass.reason,  Provider.anthropic, "claude-opus-4-6",         False, 0.005,   0.025),
+    (WorkloadClass.reason,  Provider.anthropic, "claude-sonnet-4-6",       False, 0.003,   0.015),
+    (WorkloadClass.reason,  Provider.openai,    "gpt-5.4",                 False, 0.0025,  0.015),
+    (WorkloadClass.reason,  Provider.gemini,    "gemini-3-pro",            False, 0.002,   0.012),
+    (WorkloadClass.agents,  Provider.anthropic, "claude-sonnet-4-6",       False, 0.003,   0.015),
+    (WorkloadClass.agents,  Provider.openai,    "gpt-5.4",                 False, 0.0025,  0.015),
     (WorkloadClass.agents,  Provider.anthropic, "qwen3-32b-local",         True,  0.0,     0.0),
-    (WorkloadClass.coding,  Provider.anthropic, "claude-sonnet-4-5",       False, 0.003,   0.015),
-    (WorkloadClass.coding,  Provider.openai,    "gpt-4o",                  False, 0.0025,  0.01),
-    (WorkloadClass.coding,  Provider.cursor,    "claude-3.5-sonnet",       False, 0.003,   0.015),
+    (WorkloadClass.coding,  Provider.anthropic, "claude-sonnet-4-6",       False, 0.003,   0.015),
+    (WorkloadClass.coding,  Provider.openai,    "gpt-5.4-mini",            False, 0.00075, 0.0045),
+    (WorkloadClass.coding,  Provider.cursor,    "claude-sonnet-4-6",       False, 0.003,   0.015),
     (WorkloadClass.coding,  Provider.cursor,    "cursor-small",            False, 0.0002,  0.0008),
-    (WorkloadClass.coding,  Provider.gemini,    "gemini-2.5-flash",        False, 0.00015, 0.0006),
+    (WorkloadClass.coding,  Provider.gemini,    "gemini-3-flash",          False, 0.0005,  0.003),
     (WorkloadClass.coding,  Provider.anthropic, "deepseek-coder-local",    True,  0.0,     0.0),
 ]
 
@@ -93,7 +94,7 @@ def seed_if_empty() -> bool:
             elif cls == WorkloadClass.reason:
                 in_tok  = rng.randint(5_000, 30_000)
                 out_tok = rng.randint(500,   3_000)
-                r_tok   = rng.randint(2_000, 15_000) if "o1" in model or "opus" in model else 0
+                r_tok   = rng.randint(2_000, 15_000) if "gpt-5" in model or "opus" in model else 0
             elif cls == WorkloadClass.agents:
                 in_tok  = rng.randint(10_000, 80_000)
                 out_tok = rng.randint(1_000,  8_000)

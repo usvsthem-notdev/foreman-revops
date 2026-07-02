@@ -18,7 +18,15 @@ Open-source LLM spend tracker. Upload billing CSVs or wire up live API keys — 
 
 ---
 
+## Design principle: dollars per task solved, not price per token
+
+A lower token price can be the more expensive choice: a premium model that solves the task in fewer, less verbose turns often comes out cheaper *per solved task*. Two levers move real cost more than token price does — **prompt caching** (agentic loops re-send a mostly-stable prefix, so hit rates approach 90%; Foreman watches for silently invalidated caches) and **model choice measured by total tokens to solution** (you pay for every turn until the task is done, not for any single call). Every routing proposal ships in suggest mode and must clear a golden-eval benchmarked on cost-per-solved-task against your own workload, caching measured.
+
+---
+
 ## What it does
+
+**Executive Brief** — the one-screen answer for a COO/CFO: period spend, daily run-rate with week-over-week delta, 30-day forecast, identified savings (with a monthly equivalent), budget health, and the top three actions ranked by dollar impact — plus a plain-English "bottom line" generated deterministically from the data. No LLM call, free to render, identical on every rerun.
 
 **Burn Map** — stacked bar chart split between frontier spend and locally-absorbed cost. Breaks down by workload class (extract · rag · reason · agents · coding), provider, and model. Shows daily burn with a 30-day projection and budget progress bars, plus an input-vs-output cost split (output is priced several times higher per token, so the token-count split and the dollar split usually don't match).
 
@@ -26,7 +34,7 @@ Open-source LLM spend tracker. Upload billing CSVs or wire up live API keys — 
 
 **Live Polling** — background scheduler fetches usage from Anthropic, OpenAI, and Cursor APIs on a configurable interval (default: every 6 hours). Stores results to the same SQLite DB the burn map reads from.
 
-**Spend Intelligence** — detect → propose → guardrails loop. Flags concentration risk, reasoning token waste, spend drift, and untagged entries. Generates routing proposals with estimated savings and a quality-floor guardrail note.
+**Spend Intelligence** — detect → propose → guardrails loop. Flags concentration risk, reasoning token waste, spend drift, low cache hit rates on repeat-heavy workloads, silently degraded caches, batch-eligible spend paying real-time prices, and untagged entries. Generates routing proposals against current (July 2026) model tiers with estimated savings and a quality-floor guardrail note.
 
 **Prompt Optimizer** — paste a prompt you're about to send and get a free, local, deterministic (Tier-0) rewrite before it ever reaches an LLM: filler stripped, duplicate clauses removed, an output-shaping directive added, all priced against Foreman's real per-model rates. Repeated prompt templates are fingerprinted and tracked so recurring ones surface as "hot" — candidates for a heavier Tier-1 rewrite or a cached prefix. Built on the vendored, stdlib-only [`foreman_optimizer`](foreman_optimizer/) package.
 
@@ -132,11 +140,11 @@ estimate against a different model's input rate.
 
 | Class | Typical models | Absorbable? |
 |---|---|---|
-| `extract` | haiku, gpt-3.5 | High — structured output, local models match quality |
-| `rag` | haiku + embeddings | High — local embedding + small generator works well |
-| `reason` | opus, o1, o3 | Partial — planning steps can move locally, final synthesis often can't |
-| `agents` | sonnet, gpt-4o | Partial — sub-task planning is a good local candidate |
-| `coding` | sonnet, gpt-4o | Partial — most code tasks; reserve frontier for hard proofs |
+| `extract` | haiku-4-5, gpt-5.4-nano | High — structured output, local models match quality; batch-eligible |
+| `rag` | haiku-4-5 + embeddings | High — local embedding + small generator works well; cache the shared prefix |
+| `reason` | opus-4-8, gpt-5.5, gemini-3-pro | Partial — planning steps can move locally, final synthesis often can't |
+| `agents` | sonnet-4-6, gpt-5.4 | Partial — sub-task planning is a good local candidate; caching is the biggest lever |
+| `coding` | sonnet-4-6, gpt-5.4-mini | Partial — most code tasks; reserve frontier for hard proofs |
 
 ---
 

@@ -22,6 +22,7 @@ from src.ui import (
     burn_map,
     classifier,
     entry,
+    exec_brief,
     finance,
     intelligence,
     optimizer,
@@ -150,13 +151,16 @@ budgets_stat = budget_status(df, budgets_raw) if not df.empty else []
 # ---------------------------------------------------------------------------
 
 TABS = [
-    "Burn Map", "Finance", "Spend Intelligence", "AI Categories",
+    "Executive Brief", "Burn Map", "Finance", "Spend Intelligence", "AI Categories",
     "Prompt Optimizer", "Bill Analyzer", "Live API", "Manual Entry", "Settings",
 ]
 (
-    tab_burn, tab_finance, tab_intel, tab_clf,
+    tab_brief, tab_burn, tab_finance, tab_intel, tab_clf,
     tab_optimizer, tab_bill, tab_api, tab_entry, tab_settings,
 ) = st.tabs(TABS)
+
+with tab_brief:
+    exec_brief.render(df, budgets_stat)
 
 with tab_burn:
     burn_map.render(df, budgets_stat)

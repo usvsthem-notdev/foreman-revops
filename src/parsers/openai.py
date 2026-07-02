@@ -164,23 +164,41 @@ def _parse_row(
     )
 
 
-# Approximate OpenAI pricing ($/M tokens) — June 2026
+# Approximate OpenAI pricing ($/M tokens) — July 2026
 # Public: also consumed by src.analytics.pricing for burn-map cost attribution.
+# Retired models stay in the table so historical bill exports still price at
+# the rate that applied when the spend happened.
 OPENAI_PRICES: dict[str, tuple[float, float]] = {
-    "o3":           (10.0, 40.0),
+    # Current generation
+    "gpt-5.5":      (5.0,  30.0),
+    "gpt-5.4-mini": (0.75, 4.5),
+    "gpt-5.4-nano": (0.2,  1.25),
+    "gpt-5.4":      (2.5,  15.0),
+    "gpt-5.1":      (1.25, 10.0),
+    "gpt-5-mini":   (0.25, 2.0),
+    "gpt-5-nano":   (0.05, 0.4),
+    "gpt-5":        (1.25, 10.0),
+    # Prior generation — historical bills
+    "o4-mini":      (1.1,  4.4),
+    "o3":           (2.0,  8.0),    # post-June-2025 80% price cut
     "o1":           (15.0, 60.0),
     "o1-mini":      (3.0,  12.0),
     "gpt-4o":       (2.5,  10.0),
+    "gpt-4.1":      (2.0,  8.0),
     "gpt-4-turbo":  (10.0, 30.0),
     "gpt-4":        (30.0, 60.0),
     "gpt-3.5":      (0.5,  1.5),
     "text-embedding": (0.1, 0.0),
 }
 
+# Longest key first so "gpt-5.4-mini" can't be shadowed by "gpt-5" or "gpt-5.4".
+_PRICE_LOOKUP_ORDER = sorted(OPENAI_PRICES, key=len, reverse=True)
+
 
 def _estimate_openai_cost(model: str, input_tok: int, output_tok: int, reasoning_tok: int) -> float:
     model_lower = model.lower()
-    for key, (in_price, out_price) in OPENAI_PRICES.items():
+    for key in _PRICE_LOOKUP_ORDER:
         if key in model_lower:
+            in_price, out_price = OPENAI_PRICES[key]
             return (input_tok * in_price + (output_tok + reasoning_tok) * out_price) / 1_000_000
     return (input_tok * 2.5 + output_tok * 10.0) / 1_000_000

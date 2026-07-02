@@ -192,9 +192,10 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
 
     # ---- Prompt / prefix cache ----
     # cache_read_tokens is a subset of input_tokens billed at a steep
-    # discount (Anthropic ~90% off, OpenAI ~50% off) instead of full input
-    # price — surfaced separately so caching's $ impact isn't hidden inside
-    # the blended input-axis total above.
+    # discount (Anthropic and GPT-5-era OpenAI ~90% off, Gemini ~75% off,
+    # legacy OpenAI ~50% off) instead of full input price — surfaced
+    # separately so caching's $ impact isn't hidden inside the blended
+    # input-axis total above.
     if metrics["total_cache_read_tokens"] > 0 or metrics["total_cache_creation_tokens"] > 0:
         st.markdown(
             '<div class="foreman-section">PROMPT / PREFIX CACHE</div>', unsafe_allow_html=True
@@ -206,8 +207,9 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
         c4.metric("Cache write tokens", f"{metrics['total_cache_creation_tokens']:,}")
         st.caption(
             "Cache reads are priced far below fresh input tokens (Anthropic "
-            "~90% off, OpenAI ~50% off) — the input $ split above already "
-            "prices them correctly, this is the discount's dollar impact."
+            "and GPT-5-era OpenAI ~90% off, Gemini ~75% off) — the input $ "
+            "split above already prices them correctly, this is the "
+            "discount's dollar impact."
         )
         if metrics["total_cost_usd"] <= 0 and metrics["cache_savings_usd"] > 0:
             st.caption(

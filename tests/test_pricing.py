@@ -18,6 +18,25 @@ class TestPriceForModel:
     def test_known_anthropic_model(self):
         assert price_for_model("claude-opus-4") == (15.0, 75.0)
 
+    def test_current_gen_anthropic_models(self):
+        # Opus price dropped to $5/$25 with the 4.5 generation — the dated
+        # legacy "claude-opus-4" rate must not shadow current models.
+        assert price_for_model("claude-opus-4-8") == (5.0, 25.0)
+        assert price_for_model("claude-haiku-4-5") == (1.0, 5.0)
+        assert price_for_model("claude-fable-5") == (10.0, 50.0)
+
+    def test_current_gen_openai_models(self):
+        assert price_for_model("gpt-5.5") == (5.0, 30.0)
+        # "gpt-5.4-mini" must not inherit gpt-5.4's higher rate, and
+        # neither may fall through to the shorter "gpt-5" key.
+        assert price_for_model("gpt-5.4-mini") == (0.75, 4.5)
+        assert price_for_model("gpt-5.4") == (2.5, 15.0)
+
+    def test_google_models_priced(self):
+        assert price_for_model("gemini-3-pro") == (2.0, 12.0)
+        assert price_for_model("gemini-3-flash") == (0.5, 3.0)
+        assert price_for_model("gemini-3-flash") != price_for_model("gemini-3.5-flash")
+
     def test_known_openai_model(self):
         assert price_for_model("gpt-4o") == (2.5, 10.0)
 
@@ -157,11 +176,19 @@ class TestCacheMultipliers:
         # multiplier would make caching look free on the very first hit.
         assert cache_multipliers("gpt-4o") == (0.5, 1.0)
 
+    def test_gpt5_era_openai_cache_read_is_90_percent_off(self):
+        # GPT-5-generation models discount cached input 90%, not the older
+        # 50% — the legacy multiplier must not leak onto current models.
+        assert cache_multipliers("gpt-5.5") == (0.1, 1.0)
+        assert cache_multipliers("gpt-5.4-mini") == (0.1, 1.0)
+
+    def test_gemini_gets_implicit_caching_discount(self):
+        assert cache_multipliers("gemini-3-pro") == (0.25, 1.0)
+        assert cache_multipliers("gemini-2.5-pro") == (0.25, 1.0)
+
     def test_unrecognized_model_gets_neutral_multiplier_not_openai_discount(self):
-        # A model that isn't in either price table (local model, Gemini,
-        # future provider) must not silently inherit someone else's cache
-        # economics.
-        assert cache_multipliers("gemini-2.5-pro") == (1.0, 1.0)
+        # A model that isn't in any price table (local model, future
+        # provider) must not silently inherit someone else's cache economics.
         assert cache_multipliers("llama-3-70b-local") == (1.0, 1.0)
         assert cache_multipliers("") == (1.0, 1.0)
         assert cache_multipliers(None) == (1.0, 1.0)

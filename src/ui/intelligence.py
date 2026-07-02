@@ -37,7 +37,10 @@ def render(df: pd.DataFrame) -> None:
 
     # ---- Step 01: Detect ----
     st.markdown('<div class="foreman-section">01 · DETECT</div>', unsafe_allow_html=True)
-    st.caption("Single-model risk · Spend acceleration · Token waste · Unclassified entries")
+    st.caption(
+        "Single-model risk · Spend acceleration · Token waste · "
+        "Cache misses & degradation · Batch-eligible spend · Unclassified entries"
+    )
 
     if not report.findings:
         st.success("No significant findings. Spend looks healthy.")
@@ -60,6 +63,11 @@ def render(df: pd.DataFrame) -> None:
     st.caption("floor · suggest / auto · rollback")
 
     st.info(
+        "**Route on dollars per solved task, not price per token.**  \n"
+        "A lower token price that takes more turns is the more expensive choice — "
+        "you pay for total tokens across every turn until the task is done. "
+        "Benchmarks run against your own workload with caching measured, never "
+        "against published token prices.  \n\n"
         "**All proposals are in suggest mode by default.**  \n"
         "Promote to auto-apply only after a 7-day golden-eval quality floor hold.  \n"
         "Every routing change is backtested, not guessed."

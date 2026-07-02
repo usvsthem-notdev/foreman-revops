@@ -175,24 +175,42 @@ def _parse_row(
     )
 
 
-# Approximate Anthropic pricing ($/M tokens) — June 2026
+# Approximate Anthropic pricing ($/M tokens) — July 2026
 # Public: also consumed by src.analytics.pricing for burn-map cost attribution.
+# Retired/renamed models stay in the table so historical bill exports still
+# price at the rate that applied when the spend happened.
 ANTHROPIC_PRICES: dict[str, tuple[float, float]] = {
+    # Current generation
+    "claude-fable-5":    (10.0, 50.0),
+    "claude-opus-4-8":   (5.0,  25.0),
+    "claude-opus-4-7":   (5.0,  25.0),
+    "claude-opus-4-6":   (5.0,  25.0),
+    "claude-opus-4-5":   (5.0,  25.0),   # Opus price cut landed with 4.5
+    "claude-sonnet-4-6": (3.0,  15.0),
+    "claude-sonnet-4-5": (3.0,  15.0),
+    "claude-haiku-4-5":  (1.0,  5.0),
+    # Prior generation — historical bills
+    "claude-opus-4-1":   (15.0, 75.0),
     "claude-opus-4":     (15.0, 75.0),
     "claude-opus":       (15.0, 75.0),
     "claude-sonnet-4":   (3.0,  15.0),
     "claude-sonnet":     (3.0,  15.0),
-    "claude-haiku":      (0.25, 1.25),
+    "claude-haiku":      (1.0,  5.0),
     "claude-3-5-sonnet": (3.0,  15.0),
     "claude-3-5-haiku":  (0.8,  4.0),
     "claude-3-opus":     (15.0, 75.0),
+    "claude-3-haiku":    (0.25, 1.25),
 }
+
+# Longest key first so "claude-opus-4-8" can't be shadowed by "claude-opus-4".
+_PRICE_LOOKUP_ORDER = sorted(ANTHROPIC_PRICES, key=len, reverse=True)
 
 
 def _estimate_anthropic_cost(model: str, input_tok: int, output_tok: int) -> float:
     model_lower = model.lower()
-    for key, (in_price, out_price) in ANTHROPIC_PRICES.items():
+    for key in _PRICE_LOOKUP_ORDER:
         if key in model_lower:
+            in_price, out_price = ANTHROPIC_PRICES[key]
             return (input_tok * in_price + output_tok * out_price) / 1_000_000
     # Default fallback — mid-tier price
     return (input_tok * 3.0 + output_tok * 15.0) / 1_000_000

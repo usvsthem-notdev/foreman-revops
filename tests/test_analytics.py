@@ -10,11 +10,15 @@ from src.analytics.burn_map import (
     key_metrics,
 )
 from src.analytics.intelligence import (
+    _detect_batch_opportunity,
+    _detect_cache_degradation,
+    _detect_cache_opportunity,
     _detect_concentration,
     _detect_drift,
     _detect_reasoning_waste,
     _detect_untagged,
     _estimate_model_savings,
+    _find_cheaper_alternative,
     detect,
     generate_report,
 )
@@ -224,3 +228,104 @@ class TestIntelligenceEdgeCases:
         df = _make_df(rows)
         findings = _detect_concentration(df)
         assert any(f.severity == "high" for f in findings)
+
+
+class TestModernCostLevers:
+    def _row(self, model: str, wc: str, cost: float, input_tok: int,
+             cache_read: int = 0, is_local: bool = False):
+        return {
+            "timestamp": "2026-06-15", "provider": "anthropic", "model": model,
+            "workload_class": wc, "cost_usd": cost, "is_local": is_local,
+            "input_tokens": input_tok, "output_tokens": 500,
+            "reasoning_tokens": 0, "cache_read_tokens": cache_read, "team": "eng",
+        }
+
+    def test_cache_opportunity_flagged_when_hit_rate_low(self):
+        # Heavy uncached agent traffic on a cache-capable model.
+        rows = [self._row("claude-sonnet-4-6", "agents", 5.0, 500_000)] * 10
+        findings = _detect_cache_opportunity(_make_df(rows))
+        assert len(findings) == 1
+        assert findings[0].category == "caching"
+        assert findings[0].estimated_savings_usd > 1.0
+
+    def test_cache_opportunity_silent_when_hit_rate_healthy(self):
+        rows = [
+            self._row("claude-sonnet-4-6", "agents", 5.0, 500_000,
+                      cache_read=400_000)
+        ] * 10
+        assert _detect_cache_opportunity(_make_df(rows)) == []
+
+    def test_cache_opportunity_ignores_local_and_one_shot_classes(self):
+        rows = [
+            self._row("qwen3-32b-local", "agents", 0.0, 500_000, is_local=True),
+            self._row("claude-sonnet-4-6", "extract", 5.0, 500_000),
+        ] * 10
+        assert _detect_cache_opportunity(_make_df(rows)) == []
+
+    def test_batch_opportunity_flagged_for_latency_tolerant_spend(self):
+        rows = [self._row("claude-haiku-4-5", "extract", 4.0, 10_000)] * 10
+        findings = _detect_batch_opportunity(_make_df(rows))
+        assert len(findings) == 1
+        assert findings[0].category == "batch"
+        # 50% discount x 80% batchable share of $40
+        assert findings[0].estimated_savings_usd == pytest.approx(16.0)
+
+    def test_batch_opportunity_silent_for_interactive_spend(self):
+        rows = [self._row("claude-sonnet-4-6", "coding", 4.0, 10_000)] * 10
+        assert _detect_batch_opportunity(_make_df(rows)) == []
+
+    def test_generate_report_includes_new_proposals(self):
+        rows = (
+            [self._row("claude-sonnet-4-6", "agents", 5.0, 500_000)] * 10
+            + [self._row("claude-haiku-4-5", "extract", 4.0, 10_000)] * 10
+        )
+        report = generate_report(_make_df(rows))
+        titles = " ".join(p.title for p in report.proposals)
+        assert "prompt caching" in titles.lower()
+        assert "batch" in titles.lower()
+
+    def test_cheaper_alternative_uses_current_models(self):
+        alt = _find_cheaper_alternative("claude-opus-4-8")
+        assert alt is not None and alt[0] == "claude-haiku-4-5"
+        alt = _find_cheaper_alternative("gpt-5.5")
+        assert alt is not None and alt[0] == "gpt-5.4-mini"
+
+    def test_no_downgrade_suggested_for_already_cheap_model(self):
+        # gpt-5.4-mini contains "gpt-5.4" but is already the suggested
+        # alternative — routing it to itself would be nonsense.
+        assert _find_cheaper_alternative("gpt-5.4-mini") is None
+        assert _find_cheaper_alternative("claude-haiku-4-5") is None
+
+
+class TestCacheDegradation:
+    def _row(self, date: str, input_tok: int, cache_read: int):
+        return {
+            "timestamp": date, "provider": "anthropic",
+            "model": "claude-sonnet-4-6", "workload_class": "agents",
+            "cost_usd": 1.0, "is_local": False, "input_tokens": input_tok,
+            "output_tokens": 500, "reasoning_tokens": 0,
+            "cache_read_tokens": cache_read, "team": "eng",
+        }
+
+    def test_silent_invalidation_flagged(self):
+        # Prior week: 60% hit rate. Recent week: ~0% — a prefix change
+        # silently killed the cache.
+        rows = (
+            [self._row(f"2026-06-{d:02d}", 100_000, 60_000) for d in range(1, 8)]
+            + [self._row(f"2026-06-{d:02d}", 100_000, 0) for d in range(8, 15)]
+        )
+        findings = _detect_cache_degradation(_make_df(rows))
+        assert len(findings) == 1
+        assert findings[0].category == "cache_degradation"
+        assert findings[0].severity == "high"
+        assert findings[0].estimated_savings_usd > 0
+
+    def test_stable_hit_rate_not_flagged(self):
+        rows = [self._row(f"2026-06-{d:02d}", 100_000, 60_000) for d in range(1, 15)]
+        assert _detect_cache_degradation(_make_df(rows)) == []
+
+    def test_never_cached_is_opportunity_not_degradation(self):
+        # A workload that never had a meaningful hit rate can't "degrade" —
+        # that's _detect_cache_opportunity's territory, not a regression.
+        rows = [self._row(f"2026-06-{d:02d}", 100_000, 0) for d in range(1, 15)]
+        assert _detect_cache_degradation(_make_df(rows)) == []
