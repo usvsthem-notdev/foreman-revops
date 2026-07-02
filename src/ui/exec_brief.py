@@ -21,6 +21,15 @@ from src.analytics.intelligence import generate_report
 from src.ui.theme import CLAY, PLOTLY_LAYOUT, PLOTLY_YAXIS, SAGE
 
 
+def _escape_markdown_dollars(text: str) -> str:
+    """Streamlit's markdown renderer treats a $...$ pair as inline LaTeX math
+    (KaTeX) — a narrative sentence with two or more dollar amounts gets the
+    text between them swallowed into a math span instead of shown as plain
+    text (bold markers render as literal asterisks, hyphens as minus signs).
+    Escape every literal $ so dollar figures render as plain text."""
+    return text.replace("$", r"\$")
+
+
 def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
     if df.empty:
         st.info(
@@ -70,7 +79,7 @@ def render(df: pd.DataFrame, budgets_status: list[dict]) -> None:
     # ---- The bottom line ----
     st.markdown('<div class="foreman-section">THE BOTTOM LINE</div>', unsafe_allow_html=True)
     for line in brief["narrative"]:
-        st.markdown(f"- {line}")
+        st.markdown(f"- {_escape_markdown_dollars(line)}")
 
     # ---- 2 · Is it under control? ----
     col_trend, col_budget = st.columns([3, 2])
